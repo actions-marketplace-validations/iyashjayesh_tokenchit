@@ -5,6 +5,10 @@ import { join } from "node:path";
 /**
  * Agents we can detect but cannot total.
  *
+ * Gemini CLI used to be listed here. It records token counts in recent versions, so it is a
+ * real adapter now — see `gemini.ts`, which reports `installed-no-data` for an installation
+ * whose recordings all predate that, rather than claiming the usage was zero.
+ *
  * These are reported by `tokenchit init` rather than quietly omitted. A user with Copilot
  * CLI installed will otherwise assume detection is broken, and the honest answer — the data
  * simply is not written to disk — is more useful than silence. If either tool starts
@@ -27,11 +31,5 @@ export const unsupported: UnsupportedProbe[] = [
     reason:
       "records only a live context-window gauge (session_context_usage), never a cumulative total",
     installed: () => exists(join(homedir(), ".copilot", "data.db")),
-  },
-  {
-    name: "Gemini CLI",
-    source: "~/.gemini/tmp/*/chats/*.jsonl",
-    reason: "writes chat transcripts with no token counts in them at all",
-    installed: () => exists(join(homedir(), ".gemini")),
   },
 ];

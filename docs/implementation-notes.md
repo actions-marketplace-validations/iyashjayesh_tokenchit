@@ -14,7 +14,7 @@ targeted reads and searches rather than graph queries.
 | Stage | State |
 | --- | --- |
 | 1 — Enrich the existing recap | **Done and verified** |
-| 2 — Validated Gemini CLI support | **Format verified, adapter not written** |
+| 2 — Validated Gemini CLI support | **Done and verified** |
 | 3 — Read-only data-health diagnostics (`doctor`) | **Done and verified** |
 | 4 — Local sharing pack (PNG export) | Not started |
 | 5 — Portable history and multi-device merge | Not started |
@@ -264,8 +264,42 @@ may be collected: the brief puts hashed and truncated paths outside the contract
 is raw transcript. Only `timestamp`, `model` and the `tokens` object may be read. Fixtures must
 be synthetic, never copied from `~/.gemini`.
 
-### What remains
+### What shipped
 
-The adapter itself. `AgentId` is a closed union (`"claude-code" | "codex" | "opencode"`) that
-reaches validation, board filters, pricing, icons and site API checks, so adding a fourth agent
-is a wide change and was not started rather than half-applied.
+`packages/core/src/adapters/gemini.ts`, registered as a fourth real adapter. `AgentId` widened;
+`unsupported.ts` no longer lists Gemini. The blast radius was smaller than feared — `validate.ts`
+treats agents as bounded free-form strings rather than an enum, and the site stores `agent text`,
+so only the TS union, the icon/colour table and the board filter needed touching.
+
+**Reconciliation against real data.** Run against this machine's `~/.gemini`: 46 records,
+**1,606,888 tokens**, matching the sum of Gemini's own reported `total` fields **exactly**. The
+naive five-field reading gives 2,847,359 — **1.77× the truth**. Two consecutive scans are
+identical.
+
+**Detection is three-state on purpose.** `ready` only once a *countable* turn has been found;
+`installed-no-data` when `~/.gemini` exists but nothing readable does — which is the real state
+for an installation whose recordings all predate token recording. A user with years of older
+sessions is told that rather than shown a confident zero.
+
+**A bug found while wiring it.** `detect()` consulted the real `~/.gemini` even when a caller
+passed an explicit root, so a non-existent test path reported `installed-no-data` purely because
+this machine has Gemini installed. An explicitly-named root is now self-contained.
+
+**A second bug found.** `packages/mcp/src/tools.ts` carried a *hardcoded copy* of the unsupported
+list and had already drifted — it still called Gemini uncountable after Gemini became a real
+adapter. It now sources the probes, so the one tool whose job is explaining what cannot be
+counted cannot drift again.
+
+**Agent colour was computed, not chosen.** The obvious Google blues both failed the table's
+luminance-separation rule: `#4285F4` lands 0.007 from the neutral and `#1A73E8` 0.020 from
+opencode, either of which would merge with a neighbour in greyscale. `#174EA6` (light, 0.084)
+sits in the gap between codex and opencode; `#8AB4F8` (dark, 0.448) is 0.162 clear.
+
+### Limitations
+
+- Gemini models are **unpriced** — `prices.json` has no entry, so they contribute tokens and no
+  cost. That is the designed behaviour for an unknown model, not a gap to paper over.
+- `thoughts` and `tool` are folded into `output`. A pricing table distinguishing reasoning rates
+  would want them separate.
+- A turn with no `id` cannot be deduplicated and is kept under a synthetic key: losing real usage
+  is worse than a small risk of double-counting a record the format does not let us identify.

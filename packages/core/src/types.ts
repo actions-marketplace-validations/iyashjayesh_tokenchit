@@ -46,13 +46,15 @@ export const precisionOf = (e: UsageEvent): TsPrecision => e.tsPrecision ?? "exa
  */
 export const hasRealClock = (e: UsageEvent): boolean => precisionOf(e) !== "day";
 
-export type AgentId = "claude-code" | "codex" | "opencode";
+export type AgentId = "claude-code" | "codex" | "opencode" | "gemini";
 
 /**
- * `installed-no-data` is a real, common state, not an error: Copilot CLI and Gemini CLI
- * both keep local databases that carry no cumulative token counts, and a user who has an
- * agent installed deserves to be told why it contributes nothing rather than left to
- * wonder whether detection failed.
+ * `installed-no-data` is a real, common state, not an error.
+ *
+ * Copilot CLI keeps a live context gauge and never a cumulative total. Gemini CLI is the
+ * subtler case: it records counts only in recent versions, so an installation whose sessions
+ * all predate that is genuinely installed and genuinely uncountable. A user deserves to be
+ * told why an agent contributes nothing rather than left wondering whether detection failed.
  */
 export type Detection = "ready" | "installed-no-data" | "absent";
 

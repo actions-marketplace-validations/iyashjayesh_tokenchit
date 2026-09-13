@@ -1,14 +1,16 @@
 import type { Adapter, AgentId, UsageEvent } from "../types.js";
 import { claudeCode } from "./claude-code.js";
 import { codex } from "./codex.js";
+import { gemini } from "./gemini.js";
 import { opencode } from "./opencode.js";
 
 export { claudeCode, createClaudeCode } from "./claude-code.js";
 export { codex, createCodex } from "./codex.js";
+export { gemini, createGemini, bucketsFor } from "./gemini.js";
 export { opencode, createOpenCode } from "./opencode.js";
 export { unsupported, type UnsupportedProbe } from "./unsupported.js";
 
-export const adapters: Adapter[] = [claudeCode, codex, opencode];
+export const adapters: Adapter[] = [claudeCode, codex, opencode, gemini];
 
 export const adapterById = (id: AgentId): Adapter | undefined =>
   adapters.find((a) => a.id === id);

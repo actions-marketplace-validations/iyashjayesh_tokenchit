@@ -1,5 +1,7 @@
 import { buildRecap, formatTokens, localDay, type AgentId, type Stats } from "@tokenchit/core";
 
+import { unsupported as UNSUPPORTED_PROBES } from "@tokenchit/core/adapters";
+
 import { ALL_AGENTS, detect, read } from "./stats.js";
 
 export type Tool = {
@@ -257,10 +259,11 @@ export const tools: Tool[] = [
         supported: found.filter((a) => a.state === "ready").map((a) => a.agent),
         // Named rather than omitted: "Copilot is missing" and "Copilot cannot be supported"
         // are different answers, and only one of them is a bug report.
-        unsupported: [
-          { agent: "copilot-cli", reason: "records only a live context gauge, not token totals" },
-          { agent: "gemini-cli", reason: "transcripts carry no token counts" },
-        ],
+        /* Sourced from the probes rather than restated here. This was a hardcoded copy and it
+           had already drifted: it still called Gemini uncountable after Gemini became a real
+           adapter, so the one tool whose job is to explain what cannot be counted was the last
+           thing telling the truth about it. */
+        unsupported: UNSUPPORTED_PROBES.map((p) => ({ agent: p.name, reason: p.reason })),
       };
     },
   },
