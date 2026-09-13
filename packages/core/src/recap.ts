@@ -48,6 +48,8 @@ export type BadgeId =
   | "night-owl"
   | "weekend-zombie"
   | "agent-explorer"
+  | "model-gambler"
+  | "locked-in"
   | "no-days-off"
   | "steady-hand";
 
@@ -68,6 +70,21 @@ const WEEKEND_SHARE = 0.35;
 const AGENT_SHARE = 0.1;
 /** Streak length that earns No Days Off. */
 const STREAK_DAYS = 14;
+/**
+ * Minutes of unbroken activity that earn Locked In.
+ *
+ * Three hours, from the distribution rather than from taste: on a real corpus the median
+ * stretch is 23 minutes and the 99th percentile is about four hours, so three hours sits where
+ * a sitting stops being ordinary. Measured as a *stretch* and never as a session span — see
+ * `Stats.focus`, and the 792-hour "session" that killed the obvious implementation.
+ */
+const FOCUS_MIN = 180;
+/** Enough measured stretches for the longest of them not to be a one-off. */
+const MIN_STRETCHES = 20;
+/** Models that must each clear this share of tokens to count as genuinely in rotation. */
+const MODEL_SHARE = 0.1;
+/** Distinct models above that share which earn Model Gambler. */
+const MODEL_COUNT = 3;
 
 /**
  * Badges for a set of stats.
@@ -118,6 +135,38 @@ export function buildBadges(stats: Stats): Badge[] {
       id: "agent-explorer",
       label: "Agent Explorer",
       detail: `${used} agents each above ${Math.round(AGENT_SHARE * 100)}% of tokens`,
+    });
+  }
+
+  /*
+   * Model Gambler is Agent Explorer's sibling, one level down, and deliberately harder: three
+   * models rather than two, because almost nobody uses exactly one model for a whole year —
+   * a provider rotating a snapshot date is enough to produce two. Three at meaningful weight
+   * is a choice rather than an accident.
+   */
+  const rotated = stats.tokens > 0
+    ? stats.models.filter((m) => m.tokens / stats.tokens >= MODEL_SHARE).length
+    : 0;
+  if (rotated >= MODEL_COUNT) {
+    badges.push({
+      id: "model-gambler",
+      label: "Model Gambler",
+      detail: `${rotated} models each above ${Math.round(MODEL_SHARE * 100)}% of tokens`,
+    });
+  }
+
+  /*
+   * Locked In needs a corpus that can answer the question at all: observed clocks, and more
+   * than one event in a session. A Codex-only machine records one event per rollout, so it has
+   * no stretches and earns nothing here rather than earning it on a technicality.
+   */
+  if (stats.focus && stats.focus.stretches >= MIN_STRETCHES && stats.focus.longestStretchMin >= FOCUS_MIN) {
+    const h = Math.floor(stats.focus.longestStretchMin / 60);
+    const m = stats.focus.longestStretchMin % 60;
+    badges.push({
+      id: "locked-in",
+      label: "Locked In",
+      detail: `longest unbroken stretch was ${h}h ${m}m`,
     });
   }
 
@@ -210,6 +259,23 @@ export type Recap = {
   biggestDay: { day: string; tokens: number; display: string } | null;
   /** Deterministic activity patterns. Empty when the data cannot support any. */
   badges: Badge[];
+  /**
+   * The same year, one year earlier — or null when there is nothing honest to compare against.
+   *
+   * Null is not zero, for the same reason it is not in a period report: a year that predates
+   * this machine's history is an absence being read as a low number, which turns "I installed
+   * this in March" into "usage tripled". `reason` says which it is.
+   */
+  previousYear: {
+    year: number;
+    tokens: number;
+    display: string;
+    deltaTokens: number;
+    /** Signed percentage, or null when the baseline cannot support one. */
+    deltaPct: number | null;
+    reason: "comparable" | "no-baseline" | "partial-baseline";
+    detail: string;
+  } | null;
   agents: { agent: string; pct: number; tokens: string; cost: string }[];
   models: { model: string; tokens: string; cost: string; priced: boolean }[];
   activeDays: number;
@@ -285,7 +351,74 @@ function longestRun(byDay: Map<string, number>, year: number): number {
   return best;
 }
 
-export function buildRecap(stats: Stats, opts: { year?: number; now?: Date } = {}): Recap {
+/**
+ * The year before this one, judged the way a period report judges its baseline.
+ *
+ * `historyFrom` is the first day this machine can speak for. Without it a year that simply
+ * predates the install reads as a collapse in usage, which is a statement about when somebody
+ * installed a tool dressed up as a statement about how much they worked.
+ */
+function compareYears(
+  stats: Stats,
+  year: number,
+  historyFrom: string | null,
+): Recap["previousYear"] {
+  const previous = year - 1;
+  const tokens = stats.byYear.get(previous) ?? 0;
+  const current = stats.byYear.get(year) ?? stats.tokens;
+  const deltaTokens = current - tokens;
+
+  const withReason = (
+    reason: "comparable" | "no-baseline" | "partial-baseline",
+    detail: string,
+    deltaPct: number | null,
+  ): Recap["previousYear"] => ({
+    year: previous,
+    tokens,
+    display: formatTokens(tokens),
+    deltaTokens,
+    deltaPct,
+    reason,
+    detail,
+  });
+
+  if (!historyFrom) {
+    return withReason("no-baseline", "no history recorded yet", null);
+  }
+
+  const startsAfter = historyFrom > `${previous}-12-31`;
+  if (startsAfter) {
+    /* Two different situations, and the wording has to match which. Figures may still be
+       visible because the logs happen to reach back further than the ledger does — they simply
+       cannot be vouched for. */
+    return tokens > 0
+      ? withReason(
+          "partial-baseline",
+          `${previous} predates recorded history (from ${historyFrom}), so its total may be missing days the logs have since dropped`,
+          null,
+        )
+      : withReason("no-baseline", `history starts ${historyFrom}, after ${previous} ended`, null);
+  }
+
+  if (historyFrom > `${previous}-01-01`) {
+    return withReason(
+      "partial-baseline",
+      `history starts ${historyFrom}, part-way through ${previous}`,
+      null,
+    );
+  }
+
+  if (tokens <= 0) {
+    return withReason("no-baseline", `nothing recorded in ${previous}`, null);
+  }
+
+  return withReason("comparable", `against ${previous}`, ((current - tokens) / tokens) * 100);
+}
+
+export function buildRecap(
+  stats: Stats,
+  opts: { year?: number; now?: Date; historyFrom?: string | null } = {},
+): Recap {
   const year = opts.year ?? (opts.now ?? new Date()).getFullYear();
 
   const maxDay = Math.max(0, ...stats.byWeekday);
@@ -334,6 +467,7 @@ export function buildRecap(stats: Stats, opts: { year?: number; now?: Date } = {
         }
       : null,
     badges: buildBadges(stats),
+    previousYear: compareYears(stats, year, opts.historyFrom ?? stats.firstDay),
     agents: stats.mix.map((m) => {
       const tokens = stats.byAgent.get(m.agent) ?? 0;
       return {

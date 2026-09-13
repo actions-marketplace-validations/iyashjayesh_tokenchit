@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 
 import { formatTokens, localDay } from "@tokenchit/core";
 import {
@@ -249,7 +249,10 @@ async function exportLedger(out: string, json: boolean): Promise<number> {
     return 0;
   }
 
-  const rel = relative(process.cwd(), target);
+  /* A path that climbs out of the working directory is shown absolute. `relative()` answers
+     `../../../../tokenchit-backup.json` for a file in the home directory, which is noise here
+     and actively wrong two lines down. */
+  const rel = displayPath(target);
   say();
   say(`${green("\u2713")} wrote ${bold(rel)} ${dim(`(${bytes.toLocaleString()} bytes, mode 0600)`)}`);
   say(
@@ -260,7 +263,10 @@ async function exportLedger(out: string, json: boolean): Promise<number> {
   );
   say();
   say(`  ${grey("Usage only. No credentials, no transcripts, no paths, no repository names.")}`);
-  say(`  ${grey("On the other machine:")} ${bold(`tokenchit ledger --import ${rel}`)}`);
+  /* The basename, not this machine's path. The sentence is about a *different* machine, where
+     neither a relative path nor an absolute one from here means anything — the only part that
+     survives copying the file across is its name. */
+  say(`  ${grey("On the other machine:")} ${bold(`tokenchit ledger --import ${basename(target)}`)}`);
   say();
   return 0;
 }
@@ -450,4 +456,17 @@ async function copyLedgerFile(from: string, to: string): Promise<void> {
   const tmp = `${to}.${process.pid}.tmp`;
   await writeFile(tmp, body, { mode: 0o600 });
   await rename(tmp, to);
+}
+
+/**
+ * How to name a file in output: relative when it is inside the working directory, absolute
+ * when it is not.
+ *
+ * `relative()` alone produced `../../../../tokenchit-backup.json` for a file in the home
+ * directory — technically correct, unreadable, and meaningless the moment it is copied
+ * anywhere.
+ */
+function displayPath(target: string): string {
+  const rel = relative(process.cwd(), target);
+  return rel.startsWith("..") ? target : rel;
 }

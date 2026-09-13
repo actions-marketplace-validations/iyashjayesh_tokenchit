@@ -7,7 +7,12 @@ import {
 } from "@tokenchit/core/adapters";
 import { aggregate, type AgentId, type Detection, type Stats } from "@tokenchit/core";
 
-export type Read = { stats: Stats; recovered: Recovered };
+export type Read = {
+  stats: Stats;
+  recovered: Recovered;
+  /** The first day this machine can speak for, so every surface judges a baseline alike. */
+  historyFrom: string | null;
+};
 
 export const ALL_AGENTS: readonly AgentId[] = adapters.map((a) => a.id);
 
@@ -46,7 +51,12 @@ export async function read(
     year === undefined ? {} : { year },
   );
 
-  return { stats, recovered };
+  /* The ledger's `since` travels with the stats so every surface judges a baseline the same
+     way. The CLI passes it to `buildRecap`; without it here the MCP would fall back to the
+     earliest *observed* day, which is earlier whenever the logs reach back further than the
+     bank does — so the two would disagree about whether a year-over-year comparison is
+     trustworthy. This repo has fixed "two surfaces, two answers" twice already. */
+  return { stats, recovered, historyFrom: ledger.since };
 }
 
 export type Detected = {
