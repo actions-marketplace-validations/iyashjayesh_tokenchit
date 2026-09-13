@@ -11,6 +11,7 @@ import {
 } from "@tokenchit/core";
 
 import { flag, has, oneOf } from "../args.js";
+import { PRESETS } from "../png.js";
 import { readAuth } from "../auth.js";
 import { warnIfCoerced } from "./init.js";
 import { CONFIG_FILE, DEFAULT_CONFIG, readConfig } from "../config.js";
@@ -51,6 +52,15 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   const out = flag(argv, "--out") ?? config.output;
   const json = has(argv, "--json");
   const dryRun = has(argv, "--dry-run");
+  /* PNG is opt-in and additive. The rasteriser is an optional dependency loaded only on this
+     path, so a machine that cannot build a native module still has a working `sync`. */
+  const wantPng = has(argv, "--png");
+  const preset = oneOf(flag(argv, "--preset"), PRESETS, "preset") ?? "card";
+  const scaleFlag = flag(argv, "--scale");
+  const scale = scaleFlag ? Number(scaleFlag) : 2;
+  if (scaleFlag && !Number.isFinite(scale)) {
+    throw new Error(`--scale must be a number (got "${scaleFlag}")`);
+  }
 
   // Thousands of transcripts take a few seconds to walk. Silence over that long reads as a
   // hang, and the spinner writes to stderr so `--json` stays pipeable.
@@ -207,11 +217,32 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   const rel = relative(process.cwd(), target);
   say(`${green("✓")} wrote ${bold(rel)} ${dim(`(${svg.length} bytes)`)}`);
 
+  /*
+   * The PNG is written beside the SVG, never instead of it.
+   *
+   * The SVG is the artifact this tool argues for — a committed file GitHub serves directly. A
+   * raster copy exists for the places that will not take one, so asking for a PNG adds an
+   * output rather than replacing the one that belongs in the README.
+   */
+  let pngRel: string | null = null;
+  if (wantPng) {
+    const { toPng } = await import("../png.js");
+    const pngTarget = `${target.replace(/\.svg$/i, "")}.png`;
+    const { png, width, height } = await toPng(svg, { scale, preset });
+    await writeFile(pngTarget, png);
+    pngRel = relative(process.cwd(), pngTarget);
+    say(`${green("✓")} wrote ${bold(pngRel)} ${dim(`(${width}×${height}, ${png.length} bytes)`)}`);
+  }
+
   say();
   say(`  ${grey("embed")}     ![tokenchit — @${handle} AI coding agent usage](./${asUrlPath(rel)})`);
   // Committing on the user's behalf is not ours to decide — a tool that reads your logs
   // should not also decide what lands in your history on its first run.
   say(`  ${grey("commit")}    git add ${rel} && git commit -m "chore: update tokenchit"`);
+  if (pngRel) {
+    // Named separately so nobody embeds the raster copy in a README by accident.
+    say(`  ${grey("png")}       ${pngRel} ${dim("— for places that will not take an SVG")}`);
+  }
   if (!chained) {
     say(`  ${grey("share")}     ${bold("tokenchit publish")} ${dim("— put this on the board")}`);
     // Offered where the manual step is being shown, which is the moment it becomes relevant.

@@ -16,7 +16,7 @@ targeted reads and searches rather than graph queries.
 | 1 — Enrich the existing recap | **Done and verified** |
 | 2 — Validated Gemini CLI support | **Done and verified** |
 | 3 — Read-only data-health diagnostics (`doctor`) | **Done and verified** |
-| 4 — Local sharing pack (PNG export) | Not started |
+| 4 — Local sharing pack (PNG export) | **Done and verified** |
 | 5 — Portable history and multi-device merge | Not started |
 
 ---
@@ -303,3 +303,75 @@ sits in the gap between codex and opencode; `#8AB4F8` (dark, 0.448) is 0.162 cle
   would want them separate.
 - A turn with no `id` cannot be deduplicated and is kept under a synthetic key: losing real usage
   is worse than a small risk of double-counting a record the format does not let us identify.
+
+## Stage 4 — local PNG export
+
+### What the SVG is for, and what the PNG is not
+
+The SVG stays the artifact this tool argues for: a committed file GitHub serves directly, sharp
+at any size, a few kilobytes, and diffable. The PNG exists only for the places that will not
+take one — a social feed, a slide, a chat window. It is therefore **written beside the SVG,
+never instead of it**: `--png` adds an output rather than replacing the one that belongs in a
+README, and the closing hints name the two separately so nobody embeds the raster copy by
+mistake.
+
+### Three things it deliberately is not
+
+- **Not a screenshot.** No browser, no headless Chrome, no hosted renderer. `@resvg/resvg-js`
+  rasterises the SVG this package already produces, in-process.
+- **Not networked.** Nothing is fetched while rendering. The card names font *stacks* rather
+  than one face — precisely because GitHub strips webfont references from README SVGs — so
+  there is nothing to load, and no image is referenced by URL. `loadSystemFonts` resolves the
+  same stack a browser on the same machine would.
+- **Not an editor.** Three presets and the existing `hide`/`layout`/`theme` concepts. Anyone
+  wanting pixel control has the SVG.
+
+### The rasteriser is optional, and that is load-bearing
+
+`@resvg/resvg-js` is a native module with per-platform prebuilt binaries. As a hard dependency
+it would make `npm i -g tokenchit` fail on any machine with no prebuild and no toolchain — for
+a feature most users never touch. It is an `optionalDependency`, imported lazily *inside*
+`toPng`, so `sync`, `publish`, `recap`, `doctor` and the MCP server never load it. A machine
+that cannot build it has a fully working CLI that simply cannot write a PNG, and is told so in
+a sentence naming the fix rather than by a native-module stack trace.
+
+This required `--external:@resvg/resvg-js` in the CLI's esbuild step: bundling a native module
+fails outright, and the bundle must be able to *try* the import and fail softly at runtime.
+
+### Presets frame rather than re-render
+
+| Preset | Shape | Why |
+| --- | --- | --- |
+| `card` | the card's own 495×195, scaled | the default; nothing added |
+| `square` | 1:1 | feeds that crop to a square would otherwise eat the card's own edges |
+| `portrait` | 4:5 | the tallest most feeds show uncropped |
+
+A preset nests the card's SVG **untouched** inside a padded canvas (SVG 1.1 `<svg>` nesting,
+which resvg supports) rather than re-rendering it at a new size. A preset therefore cannot
+change what the card says or how it is laid out — it only decides how much space surrounds it.
+The framing axis only ever grows, never shrinks, so no preset can crop the card.
+
+`--scale` is clamped to 1–6: below 1 the text stops being legible, above 6 the file is large for
+no gain. A non-finite value falls back to 2 rather than throwing, because `--scale` is a quality
+knob and a broken one should not fail a card that would otherwise have been written.
+
+### `recap --png` and the period views
+
+`recap --png` writes the year card the same way. `--week`/`--month` **reject** `--png` with a
+message rather than ignoring it: those views write no SVG at all, so there is nothing to
+rasterise, and silently producing no file for a flag the user typed reads as a broken export.
+
+### Verified
+
+Real PNGs generated and inspected at all three presets (card 990×390, square 1182×1182,
+portrait 591×739 for the usage card; 1182×1478 for the taller recap card). Scale clamping
+checked at the edges — `99` → 6×, `0.01` → 1×, `NaN` → 2×. A bad `--preset` is rejected by name.
+The PNG test skips itself, rather than failing, where the optional rasteriser is absent.
+
+### Limitations
+
+- No hosted image endpoint and no Open Graph card. Both are network features; this stage is
+  local-only by design.
+- Fonts resolve against the rendering machine, so a PNG made on a machine with different fonts
+  installed will differ slightly. The SVG has the same property in browsers and this is the
+  behaviour that keeps rendering offline.

@@ -11,6 +11,7 @@ import {
 } from "@tokenchit/core";
 
 import { flag, has, oneOf } from "../args.js";
+import { PRESETS } from "../png.js";
 import { CONFIG_FILE, DEFAULT_CONFIG, readConfig } from "../config.js";
 import { scan } from "../scan.js";
 import { bold, dim, green, note, say, spin, warn } from "../ui.js";
@@ -29,6 +30,15 @@ export async function recap(argv: string[]): Promise<number> {
   const out = flag(argv, "--out") ?? "tokenchit-recap.svg";
   const json = has(argv, "--json");
   const dryRun = has(argv, "--dry-run");
+  /* Same opt-in raster export `sync` offers, on the same flags, written beside the SVG rather
+     than instead of it. The rasteriser is an optional dependency loaded only when asked for. */
+  const wantPng = has(argv, "--png");
+  const preset = oneOf(flag(argv, "--preset"), PRESETS, "preset") ?? "card";
+  const scaleFlag = flag(argv, "--scale");
+  const scale = scaleFlag ? Number(scaleFlag) : 2;
+  if (scaleFlag && !Number.isFinite(scale)) {
+    throw new Error(`--scale must be a number (got "${scaleFlag}")`);
+  }
   /*
    * `--week` and `--month` report the most recent *completed* calendar period against the one
    * before it, and are terminal-and-JSON only: they deliberately write no SVG.
@@ -43,6 +53,15 @@ export async function recap(argv: string[]): Promise<number> {
 
   if (periodFlag && yearFlag) {
     throw new Error("--year scopes a whole year; --week and --month report a completed period. Pick one.");
+  }
+  /* Said rather than ignored. A period report writes no SVG at all, so there is nothing to
+     rasterise, and silently producing no PNG for a flag the user typed reads as a broken
+     export rather than as a view that does not have a card yet. */
+  if (periodFlag && wantPng) {
+    throw new Error(
+      `--png needs a card to rasterise, and --${periodFlag} reports in the terminal only. ` +
+        "Run `tokenchit recap --png` for the year card.",
+    );
   }
   /* Always a real year, never "all time under this year's heading". A recap that totals every
      year and stamps the current one on it is wrong for anybody with more than one year of
@@ -211,8 +230,24 @@ export async function recap(argv: string[]): Promise<number> {
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, svg, "utf8");
   say(`${green("✓")} wrote ${bold(rel)} ${dim(`(${svg.length} bytes)`)}`);
+
+  let pngRel: string | null = null;
+  if (wantPng) {
+    const { toPng } = await import("../png.js");
+    const pngTarget = `${target.replace(/\.svg$/i, "")}.png`;
+    const { png, width, height } = await toPng(svg, { scale, preset });
+    await writeFile(pngTarget, png);
+    pngRel = relative(process.cwd(), pngTarget);
+    say(`${green("✓")} wrote ${bold(pngRel)} ${dim(`(${width}×${height}, ${png.length} bytes)`)}`);
+  }
+
   say();
   say(`  ![tokenchit — @${handle} ${r.year} AI coding agent recap](./${rel})`);
+  if (pngRel) {
+    // Named apart from the embed line so the raster copy does not end up in a README, where
+    // the SVG is the file that stays sharp and stays small.
+    say(`  ${dim(`png  ${pngRel} — for places that will not take an SVG`)}`);
+  }
   say();
 
   return 0;
