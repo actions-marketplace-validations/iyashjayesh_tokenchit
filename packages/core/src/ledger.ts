@@ -91,6 +91,14 @@ export type Ledger = {
   /** The IANA zone this machine banked its local days in. Interpretation only; see below. */
   tz: string;
   days: Record<string, Record<string, Record<string, Cell>>>;
+  /**
+   * Set when this ledger was just migrated from version 1, and **never written to disk**.
+   *
+   * Transient on purpose: it exists so the CLI can say, once, that the format changed — and
+   * name the way to keep a copy that no version of this tool will overwrite. `writeLedger`
+   * strips it, so the next read is a plain v2 and the notice does not repeat.
+   */
+  migratedFrom?: 1;
 };
 
 /** One `(day, agent, model)` cell: identified work, and the unidentified floor beneath it. */
@@ -269,6 +277,10 @@ export function adopt(parsed: unknown): Ledger {
         }
       }
     }
+    /* Flagged so the CLI can say, once, that the format moved — and name `--export` as the way
+       to keep a copy that no version of this tool will overwrite. Only when something was
+       actually carried over: an empty v1 file is a migration nobody needs told about. */
+    if (Object.keys(migrated.days).length > 0) migrated.migratedFrom = 1;
     return migrated;
   }
 
@@ -331,7 +343,10 @@ export async function writeLedger(ledger: Ledger, path = ledgerPath()): Promise<
   // 0700: this directory holds the ledger and, beside it, the auth token.
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
-  const body = JSON.stringify({ ...ledger, updatedAt: new Date().toISOString() });
+  /* `migratedFrom` is a signal to this run, not a fact about the file. Writing it would make
+     the notice repeat forever and leave a meaningless key in everybody's ledger. */
+  const { migratedFrom: _migrated, ...persisted } = ledger;
+  const body = JSON.stringify({ ...persisted, updatedAt: new Date().toISOString() });
   /* 0600 like auth.json beside it, and set at create time rather than chmod'ed after, so the
      contents are never briefly world-readable. This is a record of when this machine works and
      how hard; the default 0644 published that to every account on a shared box. */

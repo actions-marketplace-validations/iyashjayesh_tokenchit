@@ -958,3 +958,40 @@ their logs were not covered.
 
 Both guards were mutation-tested by deleting the Gemini page and by reverting the README row;
 each failed the intended assertion and passed again on restore.
+
+## Merge readiness
+
+CI is green on Node 22 and 24, the site job passes, and the branch merges cleanly. Versions stay
+at 0.8.0 deliberately: this repo bumps them in separate `Release vX.Y.Z` commits, not in feature
+branches, and there is no CHANGELOG to update.
+
+One thing was genuinely missing, and it is the only part of this work that changes something on
+an existing user's disk.
+
+### The migration warning existed only where no user would see it
+
+Merging this means every user's ledger migrates to the v2 format on their next `sync`. Upgrading
+is lossless. **Going back a version is not**, and nothing in the new code can change what an old
+build does: a v1 build reads a v2 ledger as unrecognised, falls back to an empty bank, and
+rewrites it from whatever logs are still on disk — destroying the one piece of state here that
+cannot be re-derived.
+
+That warning lived in `docs/implementation-notes.md` and nowhere else. Not in either README, not
+in the CLI, not anywhere a person upgrading would meet it.
+
+Now:
+
+- `adopt()` sets a **transient** `migratedFrom: 1` when it carries a v1 ledger over. `writeLedger`
+  strips it, so it is a signal to one run rather than a key in everybody's file.
+- `sync` and `ledger` both say it, and name `--export` as the way to keep a copy no version of
+  this tool will overwrite.
+- The lifecycle is right by construction: a read-only `ledger` does not write, so the file stays
+  v1 and the warning repeats — correct, because the hazard persists. The first `sync` migrates
+  the file and the notice stops. Verified end to end, and covered by two tests.
+- Both READMEs now carry it, alongside a short description of what `--export`/`--import` do and
+  the by-session merge rule.
+
+A test asserted on stdout and failed while the feature worked: `warn` writes to **stderr**, which
+is what keeps `--json` pipeable. Recorded because the failure looked like a missing feature and
+was a wrong assertion — the opposite mistake to the vacuous SVG test earlier, and the same
+lesson: check what the test is actually reading before believing it.

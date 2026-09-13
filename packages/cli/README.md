@@ -50,9 +50,17 @@ tokenchit recap           year in review: heatmap, models, totals
   --out <path>             default: tokenchit-recap.svg
   --year <yyyy>            the year to report on (default: this year)
 
-tokenchit ledger          show the local history bank, or rebuild it
+tokenchit ledger          show the local history bank, export it, or merge one in
+  --export <file>          a portable copy: usage only, no credentials or paths
+  --import <file>          preview a merge; nothing is written without --apply
+  --apply                  commit the previewed import, keeping a backup
   --rebuild                re-derive from the logs still on disk
   --yes                    required by --rebuild, which cannot be undone
+
+> **Upgrading migrates the ledger, and going back a version is not safe.** An older tokenchit
+> reads the new format as unrecognised and rewrites it from whatever logs are still on disk.
+> Upgrading is lossless and the CLI says so once. If you might roll back, run
+> `tokenchit ledger --export` first.
 
 tokenchit hook install    refresh and stage the card on every commit
 tokenchit hook uninstall

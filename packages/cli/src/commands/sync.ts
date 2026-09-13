@@ -72,7 +72,7 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   const reading = spin("reading local agent logs…");
   /* Named and counted, because a scan that reports nothing looks the same as one that has
      hung. On a large corpus this walks thousands of files over several seconds. */
-  const { stats, recovered } = await scan(config.agents, {
+  const { stats, recovered, ledger } = await scan(config.agents, {
     // A dry run promises to write nothing, and the ledger is a file like any other.
     write: !dryRun,
     onProgress: ({ agent, events }) =>
@@ -166,6 +166,27 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   /* Said once, and only when it did something. On a fresh install the bank is empty and this
      is silent; it starts speaking the first time retention takes a day it had already seen,
      which is the moment someone would otherwise notice their total quietly shrinking. */
+  /*
+   * Said once, at the moment the file changes shape.
+   *
+   * Upgrading is lossless. Going *back* a version is not, and no amount of care in this code
+   * can change what an older build does: it reads a v2 ledger as unrecognised, falls back to an
+   * empty bank and rewrites it from whatever logs are still on disk. That is the one piece of
+   * state here that cannot be re-derived, so the way out is named rather than merely implied.
+   */
+  if (ledger.migratedFrom === 1) {
+    note(
+      `ledger upgraded to the v2 format ${dim("— per-session, so history can move between machines")}`,
+    );
+    say(
+      dim(
+        "    An older tokenchit cannot read it and would overwrite it. " +
+          "Keep a copy first: tokenchit ledger --export <file>",
+      ),
+    );
+    say();
+  }
+
   if (recovered.days > 0) {
     note(
       `ledger restored ${recovered.days} ${recovered.days === 1 ? "day" : "days"} ` +

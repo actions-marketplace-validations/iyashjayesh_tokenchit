@@ -75,6 +75,14 @@ export async function ledger(argv: string[]): Promise<number> {
   say();
   // Both as local days. `since` is written by localDay while updatedAt is an ISO instant, so
   // slicing the latter showed yesterday's date to anyone east of UTC after midnight.
+  if (current.migratedFrom === 1) {
+    // The same warning `sync` gives, for whoever meets the upgrade through this command first.
+    warn("This ledger was just upgraded to the v2 format.");
+    say(dim("    An older tokenchit cannot read it and would overwrite it."));
+    say(dim("    Keep a copy first: tokenchit ledger --export <file>"));
+    say();
+  }
+
   say(dim(`  since ${current.since} · updated ${localDay(new Date(current.updatedAt))}`));
   say(dim(`  ${path}`));
   say();

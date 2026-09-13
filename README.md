@@ -86,12 +86,30 @@ tokenchit init           detect agents, write .tokenchit.json
 tokenchit sync           read your logs, show your stats, write the card
 tokenchit publish        put your row on the public board
 tokenchit recap          year in review, as a second committable SVG
-tokenchit ledger         show the local history bank, or rebuild it
+tokenchit ledger         show the local history bank, export it, or merge one in
 tokenchit schedule       print a cron or launchd entry; installs nothing
 tokenchit login          prove your GitHub handle (device flow, no password)
 tokenchit logout         forget this machine
 tokenchit whoami         who this machine is signed in as
 ```
+
+### Moving your history between machines
+
+`tokenchit ledger --export <file>` writes a portable copy — usage only, no credentials, no
+transcripts, no paths. `--import <file>` previews merging one in and writes nothing until you
+add `--apply`.
+
+The merge is by **session**, not by day, which is the only way to tell two machines' work apart
+from one machine's work copied twice: the same session seen twice counts once at its fuller
+reading, and different sessions add. History banked before this version carries no session
+identity, so it is kept and reported but never added — nothing in an aggregate distinguishes
+independent work from a duplicate.
+
+> **Upgrading migrates the ledger, and going back a version is not safe.**
+> An older tokenchit reads the new format as unrecognised, falls back to an empty bank and
+> rewrites it from whatever logs are still on disk. Upgrading itself is lossless and the CLI
+> says so once when it happens. If you might roll back, run `tokenchit ledger --export` first —
+> that file is one no version of this tool will overwrite.
 
 `tokenchit help <command>` explains one command. `NO_COLOR=1` drops colour and animation.
 Common flags: `--out`, `--theme auto|light|dark`, `--layout default|compact`, `--json`,

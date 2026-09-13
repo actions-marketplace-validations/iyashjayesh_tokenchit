@@ -290,3 +290,72 @@ test("closing the output pipe early is not an error", async () => {
     assert.ok(!stderr.includes("Unhandled"), `${args[0]} raised an unhandled error:\n${stderr}`);
   }
 });
+
+/* ---------------------------------------------------------------- *
+ * The one direction that is not safe
+ * ---------------------------------------------------------------- */
+
+test("migrating a v1 ledger says so, once, and names the way out", async () => {
+  /*
+   * Upgrading is lossless. Going back a version is not, and nothing in this code can change
+   * what an older build does: it reads a v2 ledger as unrecognised, falls back to an empty bank
+   * and rewrites it from whatever logs are still on disk — destroying the one piece of state
+   * here that cannot be re-derived.
+   *
+   * That warning lived only in an internal design note, where no user would ever meet it.
+   */
+  const v1 = {
+    version: 1,
+    since: "2026-01-01",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    days: { "2026-05-01": { "claude-code": { opus: [1_000_000, 50_000, 0, 0] } } },
+  };
+
+  const box = await sandbox(null);
+  await writeFile(box.ledgerPath, `${JSON.stringify(v1)}\n`, { mode: 0o600 });
+
+  /* Both streams: `warn` writes to stderr, which is what keeps `--json` pipeable, while the
+     lines naming the fix are ordinary output. A reader at a terminal sees one message. */
+  const said = (r) => `${r.stdout}${r.stderr}`;
+
+  const first = await attempt(["ledger"], box);
+  assert.match(said(first), /upgraded to the v2 format/i, "the upgrade was not mentioned");
+  assert.match(said(first), /--export/, "the way to keep a recoverable copy was not named");
+
+  // Reading does not write, so the file is still v1 and the hazard still stands.
+  assert.equal(JSON.parse(await readFile(box.ledgerPath, "utf8")).version, 1);
+  const second = await attempt(["ledger"], box);
+  assert.match(said(second), /upgraded to the v2 format/i, "still v1 on disk, so still warn");
+
+  // Exporting is enough to make the rollback safe, and works on the migrated view.
+  const out = join(box.cwd, "safety-copy.json");
+  assert.equal((await attempt(["ledger", "--export", out], box)).code, 0);
+
+  // Once something writes, the file is v2 and the notice stops.
+  const migrated = { ...v1, version: 2, origin: "mine", tz: "UTC", days: {} };
+  await writeFile(box.ledgerPath, `${JSON.stringify(migrated)}\n`, { mode: 0o600 });
+  const third = await attempt(["ledger"], box);
+  assert.doesNotMatch(said(third), /upgraded to the v2 format/i, "the notice repeated on a v2 file");
+});
+
+test("the migration marker is never written to disk", async () => {
+  /* It is a signal to one run, not a fact about the file. Persisting it would repeat the notice
+     forever and leave a meaningless key in everybody's ledger. */
+  const { adopt, writeLedger, readLedger } = await import("@tokenchit/core/adapters");
+
+  const led = adopt({
+    version: 1,
+    since: "2026-01-01",
+    days: { "2026-05-01": { "claude-code": { opus: [100, 0, 0, 0] } } },
+  });
+  assert.equal(led.migratedFrom, 1, "adopt did not flag the migration");
+
+  const box = await sandbox(null);
+  await writeLedger(led, box.ledgerPath);
+
+  assert.ok(
+    !(await readFile(box.ledgerPath, "utf8")).includes("migratedFrom"),
+    "the transient marker was persisted",
+  );
+  assert.equal((await readLedger(box.ledgerPath)).migratedFrom, undefined);
+});
