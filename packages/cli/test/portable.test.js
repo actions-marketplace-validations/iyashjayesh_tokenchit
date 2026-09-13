@@ -243,3 +243,50 @@ test("--json reports the preview without writing", async () => {
   assert.equal(payload.sources.added, 1);
   assert.equal(await readFile(mine.ledgerPath, "utf8"), before);
 });
+
+/* ---------------------------------------------------------------- *
+ * Output that nobody is reading any more
+ * ---------------------------------------------------------------- */
+
+test("closing the output pipe early is not an error", async () => {
+  /*
+   * `tokenchit ledger | head -3` is an ordinary thing to type, and `head` closes the pipe as
+   * soon as it has its three lines. Every later write then failed with EPIPE, which Node raises
+   * as an unhandled `error` event — so a standard Unix idiom ended in a crash dump and a
+   * non-zero exit, and `| less` did the same to anyone who quit early.
+   *
+   * It only bit commands that do asynchronous work *between* writes, which is why it looked
+   * intermittent: a `--json` command scans first and writes once, so its single write lands in
+   * the pipe buffer before the reader is gone.
+   */
+  const { spawn } = await import("node:child_process");
+  const box = await sandbox(
+    ledgerWith("mine", { "2026-08-01": { "claude-code": { opus: cell("aaaaaaaaaaaa", 1000) } } }),
+  );
+
+  for (const args of [["ledger"], ["doctor"]]) {
+    const stderr = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, ...args], {
+        cwd: box.cwd,
+        env: {
+          ...process.env,
+          HOME: FIXTURE_HOME,
+          USERPROFILE: FIXTURE_HOME,
+          CLAUDE_CONFIG_DIR: "",
+          XDG_CONFIG_HOME: box.xdg,
+          NO_COLOR: "1",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      let err = "";
+      child.stderr.on("data", (d) => (err += d));
+      // Read one chunk, then close — exactly what `head -1` does.
+      child.stdout.once("data", () => child.stdout.destroy());
+      child.on("close", () => resolve(err));
+    });
+
+    assert.ok(!stderr.includes("EPIPE"), `${args[0]} crashed on a closed pipe:\n${stderr}`);
+    assert.ok(!stderr.includes("Unhandled"), `${args[0]} raised an unhandled error:\n${stderr}`);
+  }
+});

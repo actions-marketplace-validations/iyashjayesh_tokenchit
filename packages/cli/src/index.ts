@@ -20,7 +20,7 @@ import {
   usage,
   valuedFlags,
 } from "./help.js";
-import { bold, dim, fail, muteSqliteWarning, say } from "./ui.js";
+import { bold, dim, fail, muteSqliteWarning, say, tolerateClosedOutput } from "./ui.js";
 
 /** "did you mean" for a name that missed, printed before the usage screen scrolls it away. */
 function suggest(typed: string): void {
@@ -51,6 +51,8 @@ function checkNode(): boolean {
 
 async function main(): Promise<number> {
   if (!checkNode()) return 1;
+  // Before anything writes, or the first line into a closed pipe is already a crash.
+  tolerateClosedOutput();
   muteSqliteWarning();
 
   const [command, ...argv] = process.argv.slice(2);

@@ -212,9 +212,28 @@ async function exportLedger(out: string, json: boolean): Promise<number> {
 
   const envelope = buildExport(current);
   const target = resolve(process.cwd(), out);
-  await mkdir(dirname(target), { recursive: true });
-  // 0600 like the ledger itself. This is a record of when somebody works and how hard.
-  await writeFile(target, `${JSON.stringify(envelope)}\n`, { encoding: "utf8", mode: 0o600 });
+
+  /*
+   * Wrapped, for the same reason `sync --out` wraps its write.
+   *
+   * A bare errno names the recursive mkdir's first failure point — a path the user never typed
+   * — mentions neither the flag nor what was asked for, and offers no next step:
+   * `--export /nope/deeper/x.json` reported `ENOENT: no such file or directory, mkdir '/nope'`.
+   */
+  try {
+    await mkdir(dirname(target), { recursive: true });
+    // 0600 like the ledger itself. This is a record of when somebody works and how hard.
+    await writeFile(target, `${JSON.stringify(envelope)}\n`, { encoding: "utf8", mode: 0o600 });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const why =
+      code === "EACCES" || code === "EPERM"
+        ? "no permission to write there"
+        : code === "ENOENT"
+          ? "that directory does not exist and could not be created"
+          : ((err as Error).message ?? String(err));
+    throw new Error(`could not write --export ${target}: ${why}`);
+  }
 
   const bytes = (await stat(target)).size;
   if (json) {

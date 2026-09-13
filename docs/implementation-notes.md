@@ -779,3 +779,35 @@ zero out-of-range counts, zero implausible dates** — so no real figure moves.
   7; an out-of-range year falls back to the current one. Writes nothing.
 - **Real-data integrity after every fix**: `sync`, `recap` and `doctor` agree exactly, and the
   real ledger still round-trips through export and import as a no-op.
+
+## QA round three — two more, both in how the tool behaves as a Unix citizen
+
+### `tokenchit ledger | head` printed a crash dump
+
+`head` closes the pipe the moment it has its lines. Every later write then failed with EPIPE,
+which Node raises as an *unhandled* `error` event — so a standard shell idiom ended in a stack
+trace and a non-zero exit, and `| less` did the same to anyone who quit before the end.
+
+It only bit commands that do asynchronous work *between* writes: a `--json` command scans first
+and writes once, so its single write lands in the pipe buffer before the reader is gone. That is
+why it looked intermittent, and why the first attempt to reproduce it came back clean — piping
+`2>&1` merges stderr into the very pipe being closed, hiding the evidence.
+
+`ledger`, `doctor`, `init`, `recap` and `sync` were all affected. Fixed once at the entry point:
+EPIPE on stdout or stderr exits 0, because the reader asking for less output than there was is
+not a failure. Every other error still propagates.
+
+### `--export` leaked a raw errno
+
+`ledger --export /nope/deeper/x.json` reported `ENOENT: no such file or directory, mkdir
+'/nope'` — a path the user never typed (the recursive mkdir's first failure point), with no
+mention of the flag and no next step. `sync --out` had already fixed exactly this and carries a
+comment saying so; the export path was written later and did not inherit it. Now wrapped the
+same way.
+
+### Also checked this round
+
+- **Interrupted mid-write** (SIGINT during a scan): no stale lock left behind, and the next run
+  proceeds normally.
+- **Non-TTY output**: no ANSI escapes leak into a redirected file.
+- **Unwritable `--out`**: already wrapped, still correct.
