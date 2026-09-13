@@ -32,7 +32,21 @@ const gridRight = GRID.x + GRID.cols * GRID.pitch - 1;
 /** Pill metrics. The font is monospace, so a label's width is arithmetic rather than a guess. */
 const BADGE = { font: 7.5, charW: 4.5, padX: 8, gap: 6, h: 14 };
 
-const pillWidth = (label: string): number => label.length * BADGE.charW + BADGE.padX * 2;
+/** The longest label that can fit the inner track, in characters. */
+const MAX_PILL_CHARS = Math.floor((INNER - BADGE.padX * 2) / BADGE.charW);
+
+/**
+ * A label short enough to fit inside one pill.
+ *
+ * No badge this tool awards comes close — the longest is "Weekend Zombie" at fourteen — so this
+ * is a guard rather than a feature. Wrapping cannot save a *single* label that is wider than the
+ * card, and the failure mode without this is text running off the edge of the artwork, which
+ * looks like a broken renderer rather than a long name.
+ */
+const fitLabel = (label: string): string =>
+  label.length <= MAX_PILL_CHARS ? label : `${label.slice(0, MAX_PILL_CHARS - 1)}\u2026`;
+
+const pillWidth = (label: string): number => fitLabel(label).length * BADGE.charW + BADGE.padX * 2;
 
 /**
  * Lay the badges out into rows that fit the card's inner track.
@@ -361,7 +375,7 @@ export function buildRecapSvg(opts: RecapCardOptions): string {
             "font-size": BADGE.font,
             fill: pal.legend,
           },
-          text: label,
+          text: fitLabel(label),
         }),
       );
       x += w + BADGE.gap;

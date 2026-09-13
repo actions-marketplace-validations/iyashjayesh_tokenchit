@@ -518,3 +518,41 @@ test("the pill outline survives a dark card", () => {
   const dark = buildRecapSvg({ handle: "octocat", recap: recapWithBadges(ALL_BADGES), theme: "dark" });
   assert.ok(!dark.includes('stroke="#55554E"'), "a dark card kept the light stroke");
 });
+
+test("a label too wide for the card is shortened rather than allowed to run off it", () => {
+  /*
+   * Not reachable by any badge this tool awards — the longest is "Weekend Zombie" at fourteen
+   * characters — so this is a guard for whoever adds the next one. Wrapping cannot rescue a
+   * single label wider than the card, and text running past the artwork's edge reads as a
+   * broken renderer rather than a long name.
+   */
+  const svg = buildRecapSvg({
+    handle: "octocat",
+    recap: recapWithBadges(["A".repeat(200)]),
+    theme: "light",
+  });
+
+  const [pill] = pillsIn(svg);
+  assert.ok(pill, "no pill was drawn at all");
+  assert.ok(pill.x + pill.w <= 495 - 28, "the pill ran past the right margin");
+  assert.match(svg, /…<\/text>/, "the label was not visibly shortened");
+});
+
+test("badge labels are escaped into the card", () => {
+  /* Labels are our own strings today, so this is defence in depth rather than a live hole —
+     but the card is a file people commit and a site renders. */
+  const svg = buildRecapSvg({
+    handle: "octocat",
+    recap: recapWithBadges(['</text><script>alert(1)</script>', 'Tom & Jerry']),
+    theme: "light",
+  });
+
+  assert.ok(!svg.includes("<script>"), "a script tag reached the output");
+  assert.ok(svg.includes("&lt;/text&gt;"), "the payload was not escaped");
+  assert.ok(svg.includes("Tom &amp; Jerry"), "an ampersand was not escaped");
+  assert.equal(
+    (svg.match(/<text/g) ?? []).length,
+    (svg.match(/<\/text>/g) ?? []).length,
+    "text elements are unbalanced",
+  );
+});
