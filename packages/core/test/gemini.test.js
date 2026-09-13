@@ -168,3 +168,27 @@ test("an absent tree is absent, not an error", async () => {
 test("detection reports ready only when a countable turn exists", async () => {
   assert.equal(await createGemini(ROOT).detect(), "ready");
 });
+
+test("a fractional token count is skipped, not floored into the total", () => {
+  /*
+   * Counts are coerced at the adapter boundary — floored, because a token is a whole thing and
+   * the export format validates buckets as integers. Flooring then makes a fractional record
+   * disagree with its own stated total, and this adapter's rule for that is to skip rather than
+   * coerce. Both halves matter: banking 100.5 would produce a bucket no export could carry.
+   */
+  assert.equal(bucketsFor({ input: 100.5, output: 10, total: 110.5 }), null);
+  assert.deepEqual(bucketsFor({ input: 100, output: 10, total: 110 }), {
+    input: 100,
+    output: 10,
+    cacheWrite: 0,
+    cacheRead: 0,
+  });
+
+  // With no stated total there is nothing to disagree with, so the floored value is used.
+  assert.deepEqual(bucketsFor({ input: 100.9, output: 10.9 }), {
+    input: 100,
+    output: 10,
+    cacheWrite: 0,
+    cacheRead: 0,
+  });
+});

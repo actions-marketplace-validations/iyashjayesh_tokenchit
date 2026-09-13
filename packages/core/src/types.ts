@@ -85,5 +85,56 @@ export type Adapter = {
   read(): AsyncIterable<UsageEvent>;
 };
 
+/**
+ * A token count read from a log file, or zero.
+ *
+ * Log files are untrusted input. They are written by other people's software, truncated by
+ * crashes, and occasionally corrupt — and a value read out of one flows straight into the
+ * card, the published payload and the ledger, where max-wins banks it *permanently*.
+ *
+ * Measured on a deliberately corrupt transcript before this existed: a string where a number
+ * belonged turned `stats.tokens` into the concatenation `"110-99999lots00Infinity5311"` and
+ * printed it as the card's headline, while a `1e308` made `ledgerSummary` return `Infinity`.
+ * Neither was rejected anywhere downstream, because every downstream check assumes the
+ * adapters produce numbers.
+ *
+ * So the coercion happens once, here, at the boundary where the value stops being JSON and
+ * starts being a measurement:
+ *
+ * - not a finite number, negative, or above `MAX_SAFE_INTEGER` — where integer arithmetic
+ *   stops being exact anyway — reads as 0 rather than propagating;
+ * - a fractional value is floored, because a token is a whole thing and the export format
+ *   validates buckets as integers.
+ *
+ * Zero rather than throwing: one bad line must not cost a user every other line in the file.
+ */
+export const count = (v: unknown): number =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 && v <= Number.MAX_SAFE_INTEGER
+    ? Math.floor(v)
+    : 0;
+
+/**
+ * A timestamp read from a log file, or null.
+ *
+ * The companion to `count`, and it exists for a failure that is easy to miss. Every adapter
+ * already rejected an unparseable date — but not an absurd one, and `localDay` renders a
+ * six-digit year as `275760-09-13`. That is a day key the ledger accepts and the export format
+ * rejects, so a *single* corrupt timestamp anywhere in a corpus made the whole history
+ * un-exportable: the feature works, the data is fine, and one bad line from years ago silently
+ * disables it.
+ *
+ * Bounded at four digits rather than at "now", deliberately. Rejecting future dates would mean
+ * a machine with a wrong clock loses real work, which is a worse failure than keeping a date
+ * that is merely implausible. The job here is only to guarantee that every day key this tool
+ * produces is a `YYYY-MM-DD` it can also read back.
+ */
+export const when = (raw: unknown): Date | null => {
+  if (raw === undefined || raw === null) return null;
+  const d = raw instanceof Date ? raw : new Date(raw as string | number);
+  if (Number.isNaN(d.getTime())) return null;
+  const year = d.getFullYear();
+  return year >= 2000 && year <= 9999 ? d : null;
+};
+
 export const totalTokens = (e: UsageEvent): number =>
   e.input + e.output + e.cacheWrite + e.cacheRead;

@@ -1,0 +1,10 @@
+{"sessionId":"s-good","timestamp":"2026-08-01T10:00:00Z","requestId":"r1","message":{"id":"m1","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":100,"output_tokens":10}}}
+{"sessionId":"s1","timestamp":"2026-08-01T10:00:00Z","requestId":"r2","message":{"id":"m2","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":1,"output_tokens":"lots"}}}
+{"sessionId":"s2","timestamp":"2026-08-01T10:00:00Z","requestId":"r3","message":{"id":"m3","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":-99999,"output_tokens":-1}}}
+{"sessionId":"s3","timestamp":"2026-08-01T10:00:00Z","requestId":"r4","message":{"id":"m4","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":1e308,"output_tokens":1e308}}}
+{"sessionId":"s4","timestamp":"+275760-09-13T00:00:00Z","requestId":"r5","message":{"id":"m5","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":5}}}
+{"sessionId":"s5","timestamp":"not-a-date","requestId":"r6","message":{"id":"m6","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":7}}}
+{"sessionId":"s6","timestamp":"2026-08-02T10:00:00Z","requestId":"r7","message":{"id":"m7","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":1.5,"output_tokens":0.25}}}
+not json at all {{{
+
+{"sessionId":"s7","timestamp":"2026-08-02T10:00:00Z","requestId":"r8","message":{"id":"m8","role":"assistant"

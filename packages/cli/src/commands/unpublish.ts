@@ -39,7 +39,13 @@ export async function unpublish(argv: string[]): Promise<number> {
       fail(`could not export your data (${res.status || "no response"}) — nothing was deleted`);
       return 1;
     }
-    await writeFile(keep, `${JSON.stringify(res.body, null, 2)}\n`, "utf8");
+    /* 0600, like `ledger --export`. This is the same class of thing — a saved copy of
+       somebody's whole usage history — and the two commands should not disagree about how
+       private it is. */
+    await writeFile(keep, `${JSON.stringify(res.body, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     say(`${green("✓")} wrote ${bold(keep)}`);
   }
 

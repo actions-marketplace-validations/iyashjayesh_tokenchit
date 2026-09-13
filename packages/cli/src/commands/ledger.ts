@@ -30,6 +30,23 @@ import { bold, dim, fail, green, grey, say, spin, warn, yellow } from "../ui.js"
  * right to see what is behind it without reading JSON.
  */
 export async function ledger(argv: string[]): Promise<number> {
+  /*
+   * Three verbs share this command, and each used to win by being checked first — so
+   * `--export a --import b` exported and silently ignored the import, and `--rebuild --export`
+   * rebuilt and wrote no file. A verb the user typed must never be dropped in silence: this is
+   * the one command here that can destroy history, and "I thought it had imported" is exactly
+   * the misunderstanding that costs somebody their ledger.
+   */
+  const verbs = (["--rebuild", "--export", "--import"] as const).filter((f) => has(argv, f));
+  if (verbs.length > 1) {
+    throw new Error(`${verbs.join(" and ")} each do a different thing to the ledger. Pick one.`);
+  }
+
+  // `--apply` is a qualifier on `--import`, and on its own it silently did nothing at all.
+  if (has(argv, "--apply") && !has(argv, "--import")) {
+    throw new Error("--apply commits a previewed import; it needs --import <file> to apply.");
+  }
+
   if (has(argv, "--rebuild")) return rebuild(argv);
 
   const exportTo = flag(argv, "--export");

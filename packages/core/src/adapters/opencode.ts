@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { count, when } from "../types.js";
 import type { Adapter, Detection, UsageEvent } from "../types.js";
 
 const defaultDb = () => join(homedir(), ".local", "share", "opencode", "opencode.db");
@@ -128,20 +129,20 @@ export function createOpenCode(dbPath = defaultDb()): Adapter {
 
           const created = msg.time?.created;
           if (typeof created !== "number") continue;
-          const ts = new Date(created);
-          if (Number.isNaN(ts.getTime())) continue;
+          const ts = when(created);
+          if (!ts) continue;
 
           const t = msg.tokens;
           yield {
             agent: "opencode",
             ts,
             model: msg.modelID ?? "unknown",
-            input: t.input ?? 0,
+            input: count(t.input),
             // OpenCode counts reasoning beside output rather than inside it; folding it in
             // keeps the four buckets summing to the `total` it reports.
-            output: (t.output ?? 0) + (t.reasoning ?? 0),
-            cacheWrite: t.cache?.write ?? 0,
-            cacheRead: t.cache?.read ?? 0,
+            output: count(t.output) + count(t.reasoning),
+            cacheWrite: count(t.cache?.write),
+            cacheRead: count(t.cache?.read),
             /* Session first, message id second. Either is device-independent and either
                answers the question the ledger asks — "is this the same work seen twice?" — so
                the coarser one is preferred only because it stores smaller. Neither is a path

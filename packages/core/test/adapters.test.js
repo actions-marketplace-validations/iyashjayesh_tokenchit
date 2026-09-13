@@ -193,3 +193,64 @@ test("one unreadable transcript does not abort the scan", async (t) => {
     await chmod(join(dir, "locked.jsonl"), 0o644).catch(() => {});
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Log files are untrusted input
+ * ------------------------------------------------------------------ */
+
+/**
+ * A transcript is written by somebody else's software, truncated by crashes and occasionally
+ * corrupt, and whatever is read out of one flows into the card, the published payload and the
+ * ledger — where max-wins banks it permanently. These are the values that got through before
+ * the boundary coercions existed.
+ */
+test("a corrupt transcript cannot produce a corrupt total", async () => {
+  const { aggregate: agg } = await import("../dist/index.js");
+  const root = join(FIXTURES, "corrupt");
+  const events = await collect(createClaudeCode(root));
+
+  for (const e of events) {
+    for (const field of ["input", "output", "cacheWrite", "cacheRead"]) {
+      const n = e[field];
+      assert.equal(typeof n, "number", `${field} is not a number`);
+      assert.ok(Number.isFinite(n), `${field} is not finite`);
+      assert.ok(Number.isInteger(n), `${field} is not an integer`);
+      assert.ok(n >= 0, `${field} is negative`);
+    }
+    // A six-digit year renders as "275760-09-13", which is not a day this tool can read back.
+    assert.ok(e.ts.getFullYear() >= 2000 && e.ts.getFullYear() <= 9999, "implausible year");
+  }
+
+  const stats = await agg(createClaudeCode(root).read());
+  assert.equal(typeof stats.tokens, "number");
+  assert.ok(Number.isFinite(stats.tokens), "a string count concatenated into the total");
+  assert.ok(Number.isFinite(stats.equivCostUsd));
+
+  // The one sound line in the fixture still counts: rejecting a bad value must not cost a
+  // user the rest of the file.
+  assert.ok(stats.tokens >= 110, `the sound line was dropped too (got ${stats.tokens})`);
+});
+
+test("a ledger built from any transcript can always be exported", async () => {
+  /*
+   * A round-trip property rather than an example. One corrupt timestamp used to make the whole
+   * history un-exportable — the feature worked, the data was fine, and a single bad line from
+   * months ago silently disabled it.
+   */
+  const { buildExport, emptyLedger, ledgerSummary, recordAndReplay, validateExport } = await import(
+    "../dist/adapters/index.js"
+  );
+
+  const ledger = emptyLedger();
+  const source = createClaudeCode(join(FIXTURES, "corrupt"));
+  for await (const _ of recordAndReplay(source.read(), ledger, ["claude-code"], undefined, [])) {
+    // drained for the banking side effect
+  }
+
+  const checked = validateExport(JSON.parse(JSON.stringify(buildExport(ledger))));
+  assert.equal(checked.ok, true, `export rejected: ${checked.ok ? "" : checked.errors.join("; ")}`);
+  assert.ok(Number.isFinite(ledgerSummary(ledger).tokens));
+  for (const day of Object.keys(ledger.days)) {
+    assert.match(day, /^\d{4}-\d{2}-\d{2}$/, `banked an unreadable day key: ${day}`);
+  }
+});

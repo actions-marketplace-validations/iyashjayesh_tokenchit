@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { count, when } from "../types.js";
 import type { Adapter, Detection, UsageEvent } from "../types.js";
 import { walkFiles } from "./walk.js";
 
@@ -79,7 +80,10 @@ type Row = {
   sessionId?: string;
 };
 
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+/* The shared boundary coercion, rather than a private near-copy of it. This adapter had the
+   only such guard in the tree; the others did not, which is what let a corrupt transcript
+   concatenate a string into the card's headline. */
+const num = count;
 
 /**
  * Turn one recorded turn into disjoint buckets, or null when it cannot be trusted.
@@ -180,8 +184,8 @@ export function createGemini(root?: string): Adapter {
           const buckets = bucketsFor(row.tokens);
           if (!buckets) continue;
 
-          const ts = row.timestamp ? new Date(row.timestamp) : null;
-          if (!ts || Number.isNaN(ts.getTime())) continue;
+          const ts = when(row.timestamp);
+          if (!ts) continue;
 
           const event: UsageEvent = {
             agent: "gemini",

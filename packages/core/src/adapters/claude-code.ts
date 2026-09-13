@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+import { count, when } from "../types.js";
 import type { Adapter, Detection, UsageEvent } from "../types.js";
 import { walkFiles } from "./walk.js";
 
@@ -170,17 +171,17 @@ export function createClaudeCode(roots?: string[] | string): Adapter {
             const model = msg.model ?? "unknown";
             if (NON_MODELS.has(model)) continue;
 
-            const ts = row.timestamp ? new Date(row.timestamp) : null;
-            if (!ts || Number.isNaN(ts.getTime())) continue;
+            const ts = when(row.timestamp);
+            if (!ts) continue;
 
             const event: UsageEvent = {
               agent: "claude-code",
               ts,
               model,
-              input: usage.input_tokens ?? 0,
-              output: usage.output_tokens ?? 0,
-              cacheWrite: usage.cache_creation_input_tokens ?? 0,
-              cacheRead: usage.cache_read_input_tokens ?? 0,
+              input: count(usage.input_tokens),
+              output: count(usage.output_tokens),
+              cacheWrite: count(usage.cache_creation_input_tokens),
+              cacheRead: count(usage.cache_read_input_tokens),
               /* Read from the row rather than from the filename. The two agree in practice,
                  but the path is not ours to collect and the row is authoritative for a
                  transcript that was resumed into a differently named file. */

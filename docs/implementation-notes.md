@@ -697,3 +697,85 @@ leaves the ledger byte-identical.
   and every chunk CRC verified; non-numeric scales exit 1; no PNG is written without `--png`.
 - **Rebuild under v2**: a scoped `--rebuild` clears the target agent's identified sessions *and*
   its unidentified floor, and leaves every other agent untouched.
+
+## QA round two — fixing the classes, not the instances
+
+The first pass fixed four defects. This pass asked a different question: for each of those four,
+is the *class* closed, or only the instance I happened to find? It was not closed in any of
+them. Six more defects, plus two found on an attack surface the first pass never touched.
+
+### The four classes, audited
+
+**Prototype pollution.** Closed in the import path, but `checkName` in `validate.ts` still let
+`__proto__` into the board's database as an agent or model name. Every consumer in this repo
+happens to be safe — core groups with `Map`, and the site's one dynamic assignment coerces with
+`Number()`, which makes `__proto__ = <number>` a silent no-op — so it was latent rather than
+live. It is refused at the ingest boundary now, which is where it belongs: the alternative is
+relying on every future consumer to be careful.
+
+**File permissions.** The backup was the instance; the class was "files with sensitive content
+written under the umask". Three more: `auth.json` was written and *then* chmod'ed, leaving a
+window in which a credential sat on disk world-readable — the exact race the ledger's own
+comment warns against; `unpublish --export` wrote a full usage history at 0644 while
+`ledger --export` wrote 0600; and the config directory holding both was 0755. All now 0600 at
+create time, with the directory at 0700.
+
+**Silently ignored flags.** `--week --month` was the instance. Four more: `sync --json --png`
+and `recap --json --png` accepted a flag they could not honour, and `ledger --export a --import b`
+silently dropped the import while `ledger --apply` alone did nothing at all. On the one command
+that can destroy history, "I thought it had imported" is exactly the misunderstanding to refuse.
+All rejected now, and `--dry-run --png` names the PNG it *would* write rather than listing one
+of the two files it was asked for.
+
+**A session is not a cell.** Audited and genuinely closed — `cellTotal` sums digests within a
+cell, `recordAndReplay` keys by `(day, agent, model, source)`, and nothing else assumes a digest
+maps to one coordinate. Re-fuzzed at 600 trials to confirm.
+
+### A surface the first pass never tested: log files are untrusted input
+
+Adapters parse JSONL written by other people's software, truncated by crashes and occasionally
+corrupt. Nothing downstream validated what they produced, because everything downstream assumed
+adapters produce numbers. Fed a deliberately corrupt transcript:
+
+- a **string** where a count belonged turned `stats.tokens` into the concatenation
+  `"110-99999lots00Infinity5311"` — and printed it as the card's headline;
+- `1e308` made `ledgerSummary` return `Infinity`;
+- **negative** counts passed straight through;
+- and a six-digit year rendered as the day key `275760-09-13`, which the ledger accepts and the
+  export format rejects — so **one** corrupt timestamp anywhere in a corpus silently disabled
+  the whole of Stage 5. The feature worked, the data was fine, and the user could never export.
+
+Worse, max-wins banks whatever it is given, so any of these would have been cemented in the
+ledger permanently.
+
+Gemini had a guard. The other three adapters did not. There is now one shared pair of boundary
+coercions in `types.ts` — `count()` and `when()` — used by all four: non-finite, negative,
+fractional and beyond-safe-integer counts read as zero, and a date outside a four-digit year
+reads as absent. Zero rather than throwing, because one bad line must not cost a user every
+other line in the file.
+
+`when()` is bounded at four digits rather than at "now" on purpose: rejecting future dates would
+mean a machine with a wrong clock loses real work, which is a worse failure than keeping a date
+that is merely implausible. The job is only to guarantee every day key this tool writes is one
+it can read back.
+
+**One deliberate behaviour change.** Flooring makes a fractional Gemini record disagree with its
+own stated total, so it is now skipped rather than banked — which is this adapter's documented
+rule for a record that fails reconciliation, and avoids producing a non-integer bucket no export
+could carry. Verified against the real corpus: **52,564 events, zero fractional, zero negative,
+zero out-of-range counts, zero implausible dates** — so no real figure moves.
+
+### Also checked, and sound
+
+- **SVG injection** through model names and handles: ten payloads — closing tags, attribute
+  breaks, `<foreignObject>`, CDATA escapes, entity refs — against the recap card, which is the
+  surface that actually renders model names. All escaped, `<text>` tags balanced, no executable
+  content. All attributes are double-quoted, so the unescaped `'` is inert. (An earlier version
+  of this test ran against the usage card, which does not render model names at all, and
+  therefore proved nothing — worth saying, because a vacuous test is worse than none.)
+- **MCP server** under hostile JSON-RPC: unknown methods, unknown tools, missing params, wrong
+  argument types, malformed JSON — all answered with correct error codes, none crashing or
+  hanging. `days: -5` clamps to 1, `1e9` to 3650, `null` to the default 30, `7.9` truncates to
+  7; an out-of-range year falls back to the current one. Writes nothing.
+- **Real-data integrity after every fix**: `sync`, `recap` and `doctor` agree exactly, and the
+  real ledger still round-trips through export and import as a no-op.

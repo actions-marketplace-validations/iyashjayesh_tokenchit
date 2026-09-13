@@ -33,6 +33,10 @@ export async function recap(argv: string[]): Promise<number> {
   /* Same opt-in raster export `sync` offers, on the same flags, written beside the SVG rather
      than instead of it. The rasteriser is an optional dependency loaded only when asked for. */
   const wantPng = has(argv, "--png");
+  /* Same reason as `sync`: `--json` writes no card, so there is nothing to rasterise. */
+  if (wantPng && json) {
+    throw new Error("--json prints the recap instead of writing a card; there is nothing to rasterise. Drop one.");
+  }
   const preset = oneOf(flag(argv, "--preset"), PRESETS, "preset") ?? "card";
   const scaleFlag = flag(argv, "--scale");
   const scale = scaleFlag ? Number(scaleFlag) : 2;
@@ -231,6 +235,9 @@ export async function recap(argv: string[]): Promise<number> {
 
   if (dryRun) {
     say(dim(`  would write ${rel} (${svg.length} bytes)`));
+    if (wantPng) {
+      say(dim(`  would write ${rel.replace(/\.svg$/i, "")}.png (${preset}, ${scale}x)`));
+    }
     return 0;
   }
 

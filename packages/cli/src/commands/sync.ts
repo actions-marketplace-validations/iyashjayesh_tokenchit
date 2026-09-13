@@ -55,6 +55,11 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   /* PNG is opt-in and additive. The rasteriser is an optional dependency loaded only on this
      path, so a machine that cannot build a native module still has a working `sync`. */
   const wantPng = has(argv, "--png");
+  /* `--json` prints figures instead of writing files, so it has nothing to rasterise. Ignoring
+     `--png` silently there left the user with no PNG, no message and no reason to look. */
+  if (wantPng && json) {
+    throw new Error("--json prints figures instead of writing a card; there is nothing to rasterise. Drop one.");
+  }
   const preset = oneOf(flag(argv, "--preset"), PRESETS, "preset") ?? "card";
   const scaleFlag = flag(argv, "--scale");
   const scale = scaleFlag ? Number(scaleFlag) : 2;
@@ -189,6 +194,11 @@ export async function sync(argv: string[], chained = false): Promise<number> {
 
   if (dryRun) {
     say(dim(`  would write ${relative(process.cwd(), target)} (${svg.length} bytes)`));
+    /* Named rather than omitted. A dry run that lists one of the two files it was asked for
+       reads as though the other was rejected. */
+    if (wantPng) {
+      say(dim(`  would write ${relative(process.cwd(), pngPathFor(target))} (${preset}, ${scale}x)`));
+    }
     return 0;
   }
 
@@ -227,7 +237,7 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   let pngRel: string | null = null;
   if (wantPng) {
     const { toPng } = await import("../png.js");
-    const pngTarget = `${target.replace(/\.svg$/i, "")}.png`;
+    const pngTarget = pngPathFor(target);
     const { png, width, height } = await toPng(svg, { scale, preset });
     await writeFile(pngTarget, png);
     pngRel = relative(process.cwd(), pngTarget);
@@ -252,3 +262,6 @@ export async function sync(argv: string[], chained = false): Promise<number> {
 
   return 0;
 }
+
+/** The PNG that sits beside a given SVG target. One definition, so the dry run cannot drift. */
+const pngPathFor = (svgTarget: string): string => `${svgTarget.replace(/\.svg$/i, "")}.png`;

@@ -328,7 +328,8 @@ function sanitiseDays(days: unknown): Ledger["days"] {
  * logs no longer hold. A process killed mid-write must not be able to truncate it.
  */
 export async function writeLedger(ledger: Ledger, path = ledgerPath()): Promise<string> {
-  await mkdir(dirname(path), { recursive: true });
+  // 0700: this directory holds the ledger and, beside it, the auth token.
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   const body = JSON.stringify({ ...ledger, updatedAt: new Date().toISOString() });
   /* 0600 like auth.json beside it, and set at create time rather than chmod'ed after, so the
@@ -695,7 +696,7 @@ const WAIT_MS = 10_000;
  */
 export async function withLedgerLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const lock = lockPath(path);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 
   const deadline = Date.now() + WAIT_MS;
   for (;;) {

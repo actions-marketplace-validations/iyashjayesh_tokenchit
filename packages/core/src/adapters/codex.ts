@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+import { count, when } from "../types.js";
 import type { Adapter, Detection, UsageEvent } from "../types.js";
 import { walkFiles } from "./walk.js";
 
@@ -136,8 +137,8 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
 
   if (!usage) return null;
 
-  const ts = at ? new Date(at) : null;
-  if (!ts || Number.isNaN(ts.getTime())) return null;
+  const ts = when(at);
+  if (!ts) return null;
 
   /*
    * The growth across this file, not its final reading. Clamped at zero because a counter is
@@ -145,7 +146,7 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
    * than a negative.
    */
   const grew = (field: keyof TokenUsage) =>
-    Math.max(0, (usage![field] ?? 0) - (baseline === usage ? 0 : (baseline?.[field] ?? 0)));
+    Math.max(0, count(usage![field]) - (baseline === usage ? 0 : count(baseline?.[field])));
 
   // Codex reports cached input inside `input_tokens`, not beside it, so subtracting keeps
   // the four buckets disjoint and the sum equal to the total it reports.
