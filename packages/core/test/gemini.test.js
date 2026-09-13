@@ -129,7 +129,32 @@ test("no prompt, reply or project identity reaches a UsageEvent", async () => {
   }
   assert.deepEqual(
     Object.keys(events[0]).sort(),
-    ["agent", "cacheRead", "cacheWrite", "input", "model", "output", "ts"],
+    ["agent", "cacheRead", "cacheWrite", "input", "model", "output", "sourceId", "ts"],
+    "the event carries usage, a model id, a clock and a session identity, and nothing else",
+  );
+
+  /*
+   * `sourceId` is the one field that could quietly become an identifier, so it is pinned
+   * rather than merely allowed.
+   *
+   * It must be the agent's own session id, read from the recording's header row — not the
+   * file's name (a path), not `projectHash` (a directory identity, which the brief puts
+   * outside the contract hashed or not), and not anything derived from either.
+   */
+  assert.equal(events[0].sourceId, "s1", "the session id comes from the row, verbatim");
+  assert.ok(
+    events.every((e) => e.sourceId === "s1" || e.sourceId === undefined),
+    "a source is either the recording's declared session or absent — never invented",
+  );
+
+  /* The proj-b fixtures carry no header row, which is the real shape of a recording whose
+     session line was never written. Those turns must come through *without* a source rather
+     than with one derived from the filename: the ledger's answer to "no identity" is to bank
+     the usage where it cannot be merged across machines, and that is strictly better than a
+     path-shaped identity that would merge two different people's work. */
+  assert.ok(
+    events.some((e) => e.sourceId === undefined),
+    "a recording with no session header yields events with no source",
   );
 });
 

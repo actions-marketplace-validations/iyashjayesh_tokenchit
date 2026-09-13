@@ -87,10 +87,36 @@ export function createOpenCode(dbPath = defaultDb()): Adapter {
         return; // Database locked or newer than this Node's sqlite: contribute nothing.
       }
 
+      /*
+       * The session identity is a *column*, not a field of the blob.
+       *
+       * `data` carries agent, mode, model, cost, timing and tokens — and no id of any kind.
+       * The identity this ledger merges on lives in `message.session_id`, with `message.id` as
+       * the per-message fallback, which is why the projection asks for all three. Reading only
+       * `data` left every OpenCode day unattributable: real usage, banked where it could never
+       * be told apart from a copy of itself, so two machines could never merge it.
+       *
+       * The columns are asked for optimistically and the query falls back if this build of
+       * OpenCode does not have them — a schema we do not control is not one to assume.
+       */
+      const rows = (() => {
+        try {
+          return handle.prepare("SELECT session_id, id, data FROM message").all() as {
+            session_id?: string;
+            id?: string;
+            data: string;
+          }[];
+        } catch {
+          return handle.prepare("SELECT data FROM message").all() as {
+            session_id?: string;
+            id?: string;
+            data: string;
+          }[];
+        }
+      })();
+
       try {
-        for (const row of handle.prepare("SELECT data FROM message").all() as {
-          data: string;
-        }[]) {
+        for (const row of rows) {
           let msg: OpenCodeMessage;
           try {
             msg = JSON.parse(row.data) as OpenCodeMessage;
@@ -116,6 +142,11 @@ export function createOpenCode(dbPath = defaultDb()): Adapter {
             output: (t.output ?? 0) + (t.reasoning ?? 0),
             cacheWrite: t.cache?.write ?? 0,
             cacheRead: t.cache?.read ?? 0,
+            /* Session first, message id second. Either is device-independent and either
+               answers the question the ledger asks — "is this the same work seen twice?" — so
+               the coarser one is preferred only because it stores smaller. Neither is a path
+               and neither is displayed; see `ledger.ts` for what is done with it. */
+            ...(sourceOf(row) ? { sourceId: sourceOf(row) } : {}),
           };
         }
       } finally {
@@ -126,3 +157,13 @@ export function createOpenCode(dbPath = defaultDb()): Adapter {
 }
 
 export const opencode: Adapter = createOpenCode();
+
+/**
+ * A device-independent identity for one OpenCode message, or undefined.
+ *
+ * Undefined is a supported answer, not a failure: usage with no source identity is banked
+ * separately and never merged across machines, which is the honest handling of "we cannot
+ * tell whether this is the same work".
+ */
+const sourceOf = (row: { session_id?: string; id?: string }): string | undefined =>
+  row.session_id || row.id || undefined;

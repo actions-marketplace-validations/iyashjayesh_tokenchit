@@ -31,6 +31,23 @@ export type UsageEvent = {
    * not be answered with a timestamp this tool made up.
    */
   tsPrecision?: TsPrecision;
+  /**
+   * The agent's own identifier for the session this exchange belongs to, verbatim.
+   *
+   * Not for display and not for counting — for *merging*. A day total carries no evidence for
+   * whether two machines saw the same work or different work, and a machine identifier is not
+   * evidence either, because people copy home directories. A session id is: the agent minted
+   * it, it travels with the data rather than with the device, and two machines that both hold
+   * it are holding one piece of work twice.
+   *
+   * The ledger stores a truncated digest of this rather than the value, and never the file it
+   * was read from. See `ledger.ts` and `portable.ts`.
+   *
+   * Optional, because an adapter that cannot attribute a record must say so rather than
+   * invent an identity — usage with no source is banked separately and never merged across
+   * machines, which is the conservative answer to "we do not know".
+   */
+  sourceId?: string;
 };
 
 export type TsPrecision = "exact" | "session" | "day";

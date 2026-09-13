@@ -75,6 +75,8 @@ type Row = {
   timestamp?: string;
   model?: string;
   tokens?: TokenCounts;
+  /** Only on the recording's header row. Carried for ledger merging; never displayed. */
+  sessionId?: string;
 };
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
@@ -166,7 +168,13 @@ export function createGemini(root?: string): Adapter {
       let anonymous = 0;
 
       for await (const path of walkFiles(tmpRoot, ".jsonl")) {
-        for (const row of await rowsOf(path)) {
+        const rows = await rowsOf(path);
+        /* The recording's own session id, from its header row rather than from its filename:
+           the name is a path and paths are not collected. Absent in a recording whose header
+           was never written, in which case these turns simply carry no source identity. */
+        const sessionId = rows.find((r) => typeof r.sessionId === "string")?.sessionId;
+
+        for (const row of rows) {
           if (!row.tokens) continue;
 
           const buckets = bucketsFor(row.tokens);
@@ -181,12 +189,13 @@ export function createGemini(root?: string): Adapter {
             // Verbatim, like every other adapter. An unknown id is unpriced, never dropped.
             model: row.model ?? "unknown",
             ...buckets,
+            ...(sessionId ? { sourceId: sessionId } : {}),
           };
 
           /* A turn with no id cannot be deduplicated, so it is kept under a unique key rather
              than discarded: losing real usage is worse than a small risk of double-counting a
              record the format does not let us identify. */
-          seen.set(typeof row.id === "string" && row.id ? row.id : ` anon-${anonymous++}`, event);
+          seen.set(typeof row.id === "string" && row.id ? row.id : `\u0000anon-${anonymous++}`, event);
         }
       }
 

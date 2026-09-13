@@ -116,6 +116,10 @@ export const COMMANDS: Record<string, Command> = {
   ledger: {
     summary: "show the local history bank, or rebuild it",
     flags: [
+      ["--export <file>", "write a portable copy of this history"],
+      ["--import <file>", "preview merging one in; nothing is written without --apply"],
+      ["--apply", "commit the previewed import"],
+      ["--json", "machine-readable export summary or import preview"],
       ["--rebuild", "discard it and re-derive from the logs still on disk"],
       ["--yes", "required by --rebuild, which cannot be undone"],
     ],
@@ -123,13 +127,20 @@ export const COMMANDS: Record<string, Command> = {
       "Agent logs are deleted. Claude Code's cleanupPeriodDays defaults to 30, so a card built\n" +
       "only from what is on disk reports usage since the last cleanup rather than usage since\n" +
       "you installed anything — and that boundary moves every night.\n\n" +
-      "So every sync banks what it saw, keyed by day, agent and model, and keeps whichever\n" +
-      "reading is fuller. Once a day is recorded, retention can take the transcripts and the\n" +
-      "figure survives. The bank is local, is never uploaded on its own, and lives beside your\n" +
-      "credentials rather than in the repo.\n\n" +
-      "It cannot recover history from before it existed, and it cannot be moved between\n" +
-      "machines. --rebuild exists because a max-wins bank would otherwise keep a bad reading\n" +
-      "forever; it throws away every day the logs no longer cover.",
+      "So every sync banks what it saw, per day, agent, model and session, keeping whichever\n" +
+      "reading of a session is fuller. Once a day is recorded, retention can take the\n" +
+      "transcripts and the figure survives. The bank is local, is never uploaded on its own,\n" +
+      "and lives beside your credentials rather than in the repo.\n\n" +
+      "--export writes usage and nothing else: no credentials, no transcripts, no repository\n" +
+      "names, no paths. Session identities travel as truncated digests.\n\n" +
+      "--import merges by session rather than by day, which is the only way to tell two\n" +
+      "machines' work apart from one machine's work copied twice. The same session seen twice\n" +
+      "is counted once at its fuller reading; different sessions add. History with no session\n" +
+      "identity — anything banked before this version — is kept and reported but never added,\n" +
+      "because nothing in it distinguishes independent work from a duplicate.\n\n" +
+      "Preview is the default. --apply keeps a recoverable copy beside the ledger.\n\n" +
+      "--rebuild exists because a max-wins bank would otherwise keep a bad reading forever; it\n" +
+      "throws away every day the logs no longer cover.",
   },
   schedule: {
     summary: "print a scheduler entry to keep your row current",

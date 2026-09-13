@@ -1,5 +1,6 @@
 import {
   adapters,
+  foreignHistory,
   ledgerPath,
   ledgerSummary,
   readLedger,
@@ -65,6 +66,15 @@ export type DoctorReport = {
     days: number;
     tokens: number;
     recoveredThisRun: { days: number; tokens: number };
+    /**
+     * Imported history this machine holds and does not count.
+     *
+     * Reported because a ledger that silently sits on somebody's data is the failure mode a
+     * diagnostics command exists to catch. It has no session identities, so nothing in it can
+     * distinguish independent work from a copy of work already counted — adding it would be a
+     * guess and discarding it would be a loss, so it is neither, and it is said out loud.
+     */
+    heldNotCounted: { origin: string; days: number; tokens: number; first: string | null; last: string | null }[];
   };
   estimate: {
     /** Share of tokens, 0-1, whose model has a public price. */
@@ -146,6 +156,15 @@ export async function doctor(argv: string[]): Promise<number> {
       days: bank.days,
       tokens: bank.tokens,
       recoveredThisRun: { days: recovered.days, tokens: recovered.tokens },
+      heldNotCounted: foreignHistory(ledger).map((f) => ({
+        // Truncated the same way the `ledger` command truncates it, so the two name the same
+        // block of history in the same words.
+        origin: f.origin.slice(0, 8),
+        days: f.days,
+        tokens: f.tokens,
+        first: f.first,
+        last: f.last,
+      })),
     },
     estimate: {
       pricedShare: stats.pricedShare,
@@ -241,6 +260,12 @@ function render(r: DoctorReport, totalTokens: number): number {
   if (r.history.exists) {
     say(`    ${dim("since")}      ${r.history.since}`);
     say(`    ${dim("banked")}     ${r.history.days} days  ·  ${formatTokens(r.history.tokens)}`);
+    for (const h of r.history.heldNotCounted) {
+      say(
+        `    ${yellow("held")}       ${h.days} ${h.days === 1 ? "day" : "days"}  ·  ` +
+          `${formatTokens(h.tokens)}  ${dim(`from ${h.origin} — no session identities, not counted`)}`,
+      );
+    }
     if (r.history.recoveredThisRun.days > 0) {
       say(
         `    ${dim("restored")}   ${r.history.recoveredThisRun.days} days the logs no longer hold ` +

@@ -61,6 +61,8 @@ const total = (e: UsageEvent): number => e.input + e.output + e.cacheWrite + e.c
 type ClaudeLine = {
   timestamp?: string;
   requestId?: string;
+  /** The agent's own session identifier, carried for ledger merging. Never displayed. */
+  sessionId?: string;
   message?: {
     id?: string;
     role?: string;
@@ -179,6 +181,10 @@ export function createClaudeCode(roots?: string[] | string): Adapter {
               output: usage.output_tokens ?? 0,
               cacheWrite: usage.cache_creation_input_tokens ?? 0,
               cacheRead: usage.cache_read_input_tokens ?? 0,
+              /* Read from the row rather than from the filename. The two agree in practice,
+                 but the path is not ours to collect and the row is authoritative for a
+                 transcript that was resumed into a differently named file. */
+              ...(row.sessionId ? { sourceId: row.sessionId } : {}),
             };
 
             const previous = best.get(key);

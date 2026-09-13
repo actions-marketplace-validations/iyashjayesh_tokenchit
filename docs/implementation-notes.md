@@ -17,7 +17,7 @@ targeted reads and searches rather than graph queries.
 | 2 — Validated Gemini CLI support | **Done and verified** |
 | 3 — Read-only data-health diagnostics (`doctor`) | **Done and verified** |
 | 4 — Local sharing pack (PNG export) | **Done and verified** |
-| 5 — Portable history and multi-device merge | Not started |
+| 5 — Portable history and multi-device merge | **Done and verified** |
 
 ---
 
@@ -375,3 +375,227 @@ The PNG test skips itself, rather than failing, where the optional rasteriser is
 - Fonts resolve against the rendering machine, so a PNG made on a machine with different fonts
   installed will differ slightly. The SVG has the same property in browsers and this is the
   behaviour that keeps rendering offline.
+
+## Stage 5 — portable history: the accounting design
+
+Written before any mutation code, because the whole difficulty of this stage is the arithmetic
+and not the file format.
+
+### The problem the current ledger cannot solve
+
+Ledger v1 stores `day -> agent -> model -> Bucket` and keeps the **fullest** reading per cell.
+That is the right rule for one machine reading its own thinning logs, and it says nothing at
+all about two machines. Given day `D` where laptop reports 1M and desktop reports 1M:
+
+- **Max-wins** answers 1M. Correct if the two are the same work seen twice; wrong by half if
+  they are genuinely different work.
+- **Addition** answers 2M. Correct if independent; wrong by double if somebody copied a home
+  directory, restored a backup, or migrated logs to a new machine.
+
+A day total carries no evidence for choosing. And a machine identifier is not evidence either:
+the brief is explicit that a different machine ID does not prove different underlying usage,
+because people copy home directories. Any design resting on "these came from different devices,
+so add them" is guessing.
+
+### What *is* evidence: the agents' own session identities
+
+Every supported agent stamps its own records with an identifier that travels with the data
+rather than with the machine:
+
+| Agent | Identity | Where |
+| --- | --- | --- |
+| Claude Code | `sessionId` | on every transcript row |
+| Codex | `payload.session_id` | the `session_meta` row of each rollout |
+| Gemini CLI | `sessionId` | the session header row of each chat recording |
+| OpenCode | `sessionID`, else the message `id` | the message JSON blob |
+
+These are random identifiers minted by the agent. Copy a home directory and they come with it;
+work on two machines and they differ. That is precisely the distinction a day total loses, and
+it is device-independent — which is the identity the brief says to prefer where a valid one
+exists.
+
+**So the merge unit is `(day, agent, model, source)`, not `(day, agent, model)`.**
+
+### The rules, stated so they can be checked
+
+Ledger v2 stores each cell as `s: { sourceDigest -> Bucket }`.
+
+1. **Within one source digest: max-wins on the whole four-tuple.** Two readings of one session
+   are two observations of one thing; the fuller one is the truer one. This is v1's rule,
+   applied at the level where it is actually justified. It is what makes a corrected record
+   correct rather than additive.
+2. **Across distinct source digests: addition.** Not arbitrary addition — addition over
+   observations the agents themselves certify as distinct pieces of work.
+3. **Repeated import is therefore idempotent by construction**, not by a deduplication pass
+   that has to be trusted. Importing the same file twice unions the same keys.
+
+`sum` and `max` each appear exactly once, at the level where each is provable. Neither is used
+to paper over a case we could not decide.
+
+### Usage with no source identity
+
+Two things produce it: a v1 ledger being migrated (no identities were ever recorded), and any
+record an adapter cannot attribute. It lives in a second map on the cell,
+`u: { originId -> Bucket }`, holding **the fullest whole-cell total that origin ever observed**
+— which is exactly what a v1 ledger entry was. One rule governs it:
+
+> **An unidentified reading is a floor under the identified sum, never an addend, and never
+> merged across origins.**
+
+    cell total for this machine = max( Σ identified sessions , u[this origin] )
+
+- The max is between two *readings of the same logs* — the aggregate and the identified detail
+  — so taking the larger is right whichever of the two is more complete. As identified coverage
+  grows it overtakes the legacy figure; as retention eats the transcripts the floor holds the
+  line. Both directions are correct without a special case.
+- A foreign origin's floor is **preserved verbatim, never discarded, and never added.** It is
+  reported with its origin, date range and token count by `ledger`, `doctor` and every import
+  preview, and the import says in words why it is not in the headline.
+
+**This rule was corrected during implementation, and the correction matters.** The first
+version *added* `u` to the identified sum, on the reasoning that the two were complementary
+halves of a cell. They are not: they are two readings of the same logs. The bug surfaced on a
+real ledger. Five OpenCode cells had been banked once with no identity, and then again *with*
+one after the adapter learned that OpenCode keeps its session id in a table column rather than
+in the JSON blob — so the same 17.6M of work sat in both maps. Across the whole machine the
+additive rule reported **28.46B against a true 15.08B — a 1.89× overcount**, and the totals
+looked plausible the entire time. The max rule reports 15.08B and loses nothing: every token of
+the original v1 ledger's 15,069,291,399 is still there.
+
+One consequence had to be handled explicitly. If a floor held only the *unidentified remainder*
+of a mixed cell — some events attributed, some not — the max would report the identified part
+alone and silently drop the rest. So `recordAndReplay` files the **whole cell's** live total as
+the floor whenever anything in it was unattributable, and emits no floor at all when the cell is
+wholly identified. There is a test for exactly this.
+
+That is the brief's "preserve it as an identified archive" branch. The rejection branch — an
+import refused outright with an actionable diagnostic — is reserved for exports that fail
+validation or declare an incompatible accounting version, and is a supported outcome rather
+than a failure.
+
+A consequence worth stating plainly: importing a machine whose history has no session
+identities changes no total at all. The import is still worth applying, and still writes,
+because storing that history is the difference between keeping it and dropping it. Gating the
+write on the totals alone was a real bug — it printed "nothing to do" and then stored nothing,
+which is discarding the data quietly, the one thing this design promised not to do.
+
+### `origin` is a label, not a fingerprint
+
+A random identifier minted once when the ledger is created. Not a hostname, not a MAC address,
+not a username, not a path, not derived from any of them — those would be device fingerprints
+and are outside this tool's contract. Its only job is to keep one machine's unattributable
+archive distinct from another's.
+
+It travels with the file, which is the conservative behaviour: copying `~/.config/tokenchit`
+to a new machine carries the origin along, so the two ledgers' archives max-merge as one
+lineage instead of summing as two. A copied home directory therefore cannot inflate a total
+even through the unattributable path.
+
+### Digests, and why they are truncated
+
+A source identity is stored as the first 12 hex characters of the SHA-256 of `agent + "\0" +
+sessionId` — 48 bits. Unsalted, because two machines must derive the same digest from the same
+session or the whole scheme fails.
+
+Truncation trades a collision risk for size: two distinct sessions colliding would merge into
+one cell and *under*count. At 48 bits the birthday bound is around 16 million entries; a heavy
+ledger holds thousands. Hashing rather than storing the raw UUID keeps the export from carrying
+an identifier that could be cross-referenced against the log filenames on someone's disk, and
+costs nothing, since the digest is only ever compared for equality.
+
+### Timezones and date-only data
+
+The ledger banks **local** calendar days and keeps no clock, so a day's boundary was fixed by
+the exporting machine's zone at the time it scanned. That cannot be undone after the fact: no
+instant survives to re-bin.
+
+The export therefore records the exporting machine's IANA zone, and an import into a different
+zone **warns rather than adjusts**. Totals are unaffected — every token is still counted
+exactly once — but work done near midnight may be attributed to the adjacent day. Silently
+shifting days would invent precision the data does not have; refusing the import would discard
+real history over a known and bounded imprecision.
+
+### Concurrency, atomicity and recovery
+
+- Export and preview open the ledger read-only and write nothing to it. Ever.
+- An apply takes an exclusive lock file beside the ledger, re-reads the live ledger *inside*
+  the lock, and re-derives the merge against that fresh state — so an import cannot overwrite a
+  scan that landed while the operator was reading the preview.
+- `scan`'s own write takes the same lock, so the two serialise rather than interleave.
+- The previous ledger is copied to `ledger.backup.json` before the new one is renamed into
+  place. An interrupted apply leaves either the old file or the old file plus a temporary; the
+  rename is the only atomic step and it happens last.
+
+### Acceptance cases and the rule that decides each
+
+| Case | Decided by | Outcome |
+| --- | --- | --- |
+| Repeated import | rule 3 | second import is a no-op; preview says so |
+| Independent machines, overlapping dates | rule 2 | summed over disjoint digests |
+| Copied logs / home directory | rule 1 | identical digests collapse; no double count |
+| Device migration | rule 1 | same |
+| Corrected records | rule 1 | fuller reading wins within the digest |
+| Interrupted import | atomicity | live ledger unchanged; backup intact |
+| Concurrent scan | lock + re-read | merge re-derived against fresh state |
+| Incompatible export | validation | refused, naming the version and the fix |
+| Timezone change | documented | imported, warned, totals unaffected |
+| Legacy ledger with no identity | the floor rule | held under its origin, reported, not summed |
+
+### Explicitly out of scope
+
+No cloud sync service, no automatic remote collection, no background upload. `export` writes a
+file the user chooses; `import` reads one the user names. Nothing else moves.
+
+### What shipped
+
+- `packages/core/src/ledger.ts` — ledger v2. `Cell = { s: {digest -> Bucket}, u?: {origin ->
+  Bucket} }`, plus `origin` (a random label, never a device fingerprint) and `tz`. v1 files are
+  migrated on read into this origin's floor, so nothing is lost and no command needs a flag.
+- `packages/core/src/portable.ts` — the export envelope, full validation, and `mergeExport`,
+  which is **pure**: the preview a user reads and the merge an apply performs are the same
+  function, so a forecast cannot disagree with the outcome by more than what landed in between.
+- `sourceId` on `UsageEvent`, populated by all four adapters from the agents' own session ids:
+  `sessionId` on a Claude Code row, `session_meta.session_id` in a Codex rollout, `sessionId` in
+  a Gemini recording header, and `message.session_id` in OpenCode's SQLite table.
+- `withLedgerLock` and `commitLedger`. A scan no longer writes back the copy it started with; it
+  replays its banking decisions against a ledger re-read inside the lock, so an import landing
+  during a multi-second log walk is merged rather than erased.
+- `tokenchit ledger --export/--import/--apply`, and held history surfaced in `ledger` and
+  `doctor` (terminal and `--json`).
+
+**An adapter bug this stage found.** OpenCode's message identity is in the *table columns*
+(`session_id`, `id`), not in the `data` blob — the blob carries agent, mode, model, cost, timing
+and tokens and no id of any kind. Reading only `data` left every OpenCode day unattributable:
+real usage, banked where it could never be told apart from a copy of itself. Fixed; OpenCode now
+contributes 19 identified sessions on this machine where it previously contributed none.
+
+**A source-file hazard found and fixed.** Several files had been written with a literal NUL byte
+where the `\u0000` escape was intended. It worked, and it was invisible in an editor and
+un-greppable. All occurrences are now escapes.
+
+### Verified
+
+- All ten acceptance cases have a test each, plus mutual exclusion of the lock, purity of export
+  and merge, and the privacy contract of the envelope. 144 core tests green, three consecutive
+  full runs.
+- Migration of the real 59-day / 15,069,291,399-token v1 ledger on this machine: **not one
+  token lost**, before or after a subsequent `sync`.
+- Two synthetic machines end to end through the CLI: one shared session and one unique session
+  each merges to 3.50M rather than the 4.50M naive addition would give; re-applying is a no-op;
+  the backup is written; every refusal path (bad accounting version, newer envelope, malformed
+  day key, unparseable JSON, missing file) exits 1 and leaves the ledger byte-identical.
+
+### Limitations
+
+- A session digest is 48 bits. Two distinct sessions colliding would merge and *under*count. The
+  birthday bound is around 16 million entries against a few thousand in a heavy ledger.
+- Timezones are reported, never corrected. The ledger keeps no clock, so a day binned in another
+  zone cannot be re-binned after the fact; a session the exporting machine filed under a
+  different date is counted once, on this machine's date, and the difference is stated.
+- History with no session identities can never be merged. That is the design working, not a gap
+  — but it means two machines both running a pre-identity version have to upgrade and re-scan
+  before their overlapping days can be combined.
+- The lock is advisory and file-based. A process killed mid-commit leaves a stale lock that is
+  taken over after 60 seconds rather than blocking forever.
+- No cloud sync, no automatic remote collection, no background upload. `export` writes a file the
+  user names; `import` reads one the user names. Nothing else moves.
