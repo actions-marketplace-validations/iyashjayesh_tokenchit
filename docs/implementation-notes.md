@@ -597,5 +597,10 @@ un-greppable. All occurrences are now escapes.
   before their overlapping days can be combined.
 - The lock is advisory and file-based. A process killed mid-commit leaves a stale lock that is
   taken over after 60 seconds rather than blocking forever.
+- **Downgrading is not safe, and nothing can make it so.** A v1 build reads a v2 ledger as
+  unrecognised, falls back to an empty bank and then overwrites the file from whatever logs are
+  still on disk — so history the transcripts no longer hold is lost. Upgrading is lossless in
+  both directions of use; going back a version is not. Anyone who needs a way out should
+  `--export` first, which is a file no version of this tool will overwrite.
 - No cloud sync, no automatic remote collection, no background upload. `export` writes a file the
   user names; `import` reads one the user names. Nothing else moves.
