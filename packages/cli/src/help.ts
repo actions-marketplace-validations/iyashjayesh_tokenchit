@@ -37,7 +37,8 @@ export const COMMANDS: Record<string, Command> = {
     summary: "detect agents, write .tokenchit.json",
     flags: [["--handle <name>", "GitHub handle (default: guessed from origin remote)"]],
     detail:
-      "Looks for Claude Code, Codex and OpenCode logs and records which of them to read.\n" +
+      "Looks for Claude Code, Codex, Gemini CLI and OpenCode logs and records which of them to\n" +
+      "read.\n" +
       "The file it writes is meant to be committed; it never contains a credential.",
   },
   sync: {

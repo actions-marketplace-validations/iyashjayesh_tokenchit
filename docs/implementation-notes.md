@@ -811,3 +811,69 @@ same way.
   proceeds normally.
 - **Non-TTY output**: no ANSI escapes leak into a redirected file.
 - **Unwritable `--out`**: already wrapped, still correct.
+
+## QA round four — the three gaps the earlier rounds had admitted to
+
+Round three closed with three things explicitly untested: another operating system, behaviour at
+scale, and the site. All three were testable after all.
+
+### Linux: green, including the optional native module on musl
+
+Full `npm ci`, build and test run inside `node:22-alpine` (musl libc, arm64). Install, build and
+all four suites pass, and `@resvg/resvg-js` — the optional native dependency behind PNG export —
+loads. Two tests skip, both correctly and for opposite reasons: `on Linux, refuses a session with
+no display` skips on macOS and runs there, and `one unreadable transcript does not abort the
+scan` skips in the container because it runs as root and root can read a `chmod 000` file.
+
+Windows remains genuinely untested — no VM available here. A static pass found explicit Windows
+branches already in `desktop.ts` (`cmd /c start`) and `schedule.ts` (`schtasks` syntax), no
+hardcoded POSIX separators in path construction, and no `getuid`/`umask` use. The git hook is a
+`#!/bin/sh` script, which Git for Windows runs. That is a code reading, not a test result, and
+should not be reported as one.
+
+### Scale: comfortable
+
+A synthetic five-year heavy corpus — 1,825 days x 4 agents x 3 models x 10 sessions =
+**219,000 sessions across 21,900 cells**, a 7.9 MB ledger:
+
+| Operation | Time |
+| --- | --- |
+| `ledgerSummary` | 15 ms |
+| `buildExport` | 12 ms |
+| serialise to JSON | 27 ms |
+| parse from JSON | 105 ms |
+| `validateExport` | 36 ms |
+| `mergeExport` (self-merge, worst case) | 603 ms |
+| `writeLedger` | 31 ms |
+| `readLedger` | 214 ms |
+| `mergeExport` into an empty ledger | 232 ms |
+
+Heap 204 MB. `readLedger` runs on every command, so 214 ms is the figure that matters most, and
+it is for a corpus far beyond a realistic user. The 64 MiB import cap is about 8x this file —
+roughly forty years of the same intensity.
+
+### The site: a real gap, and it was in the copy
+
+Brought up Postgres and the Next dev server, ran the migrations, and published a payload
+containing Gemini usage through the actual `/api/submissions` endpoint — so the test covered
+`validate.ts`, the database and the board rendering together. The row landed (201), the board and
+profile render `gemini` with its computed colour `#174EA6`, and the OG image route renders.
+
+The first attempt was rejected into review for claiming 30 active days against 3 days of data,
+which is the validator doing its job.
+
+**What it found: the product copy never learned about Gemini.** Stage 2 made Gemini a real
+adapter and updated the adapter registry, the icon table and the board filter — but six
+user-facing places still read "Claude Code, Codex and OpenCode":
+
+- the site hero, the page description shared by both preview cards, the OG image, and the invite
+  text on a profile page;
+- `tokenchit init --help`;
+- the MCP server's README.
+
+A user reading any of those would not know Gemini was supported. All six now name it. The OG
+image was re-rendered to confirm the longer string still wraps cleanly rather than overflowing.
+
+Comments and docs that name the older three for a *historical* reason — a note about a specific
+rebuild bug, an incident in `claude-context.ts`, the stats-cache note in `internals.md` — were
+left alone. They are accurate as written and are not a list of supported agents.

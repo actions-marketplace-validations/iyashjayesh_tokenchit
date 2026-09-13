@@ -11,7 +11,7 @@ week instead of reading a table.
 }
 ```
 
-Reads the logs Claude Code, Codex and OpenCode already write on your machine. Node 22 or newer
+Reads the logs Claude Code, Codex, Gemini CLI and OpenCode already write on your machine. Node 22 or newer
 — OpenCode support uses the built-in `node:sqlite`.
 
 ## Tools
