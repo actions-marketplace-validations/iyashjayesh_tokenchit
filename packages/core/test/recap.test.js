@@ -420,3 +420,101 @@ test("a year that predates recorded history is not a collapse in usage", async (
   assert.notEqual(none.previousYear.reason, "comparable");
   assert.equal(none.previousYear.deltaPct, null);
 });
+
+/* ---------------------------------------------------------------- *
+ * Badges on the card
+ * ---------------------------------------------------------------- */
+
+/** A recap with an arbitrary badge set, so the layout can be tested independently of the rules. */
+const recapWithBadges = (labels) => ({
+  year: 2026,
+  tiles: { totalTokens: "15.5B", equivCost: "$10,058", topModel: "opus", longestStreak: "35d" },
+  rows: WEEKDAYS.map((day) => ({
+    day,
+    tokens: 100,
+    busiest: 0.5,
+    levels: Array(24).fill(2),
+    colours: Array(24).fill(RAMP[2]),
+  })),
+  peak: { from: 10, to: 20 },
+  peakCoverage: 0.89,
+  months: [],
+  biggestDay: null,
+  agents: [],
+  models: [],
+  activeDays: 59,
+  tokens: 1,
+  previousYear: null,
+  badges: labels.map((label) => ({ id: label, label, detail: "" })),
+});
+
+const heightOf = (svg) => Number(/height="(\d+)" viewBox/.exec(svg)[1]);
+const pillsIn = (svg) =>
+  [...svg.matchAll(/<rect (?:class="bg" )?x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="14" rx="7"/g)]
+    .map(([, x, y, w]) => ({ x: Number(x), y: Number(y), w: Number(w) }));
+
+const ALL_BADGES = [
+  "Night Owl",
+  "Weekend Zombie",
+  "Agent Explorer",
+  "Model Gambler",
+  "Locked In",
+  "No Days Off",
+  "Steady Hand",
+];
+
+test("a card with no badges is exactly the card that shipped before them", () => {
+  /* Nothing moves for somebody who earned none. The height is the whole test: if badges
+     reserved space unconditionally, every existing card would have grown a blank strip. */
+  const svg = buildRecapSvg({ handle: "octocat", recap: recapWithBadges([]), theme: "light" });
+  assert.equal(heightOf(svg), 330);
+  assert.equal(pillsIn(svg).length, 0);
+});
+
+test("badges render as pills, and the card grows by exactly the rows they need", () => {
+  const one = buildRecapSvg({ handle: "octocat", recap: recapWithBadges(ALL_BADGES.slice(0, 3)), theme: "light" });
+  assert.equal(pillsIn(one).length, 3);
+  assert.equal(heightOf(one), 352, "one row of badges");
+  for (const label of ALL_BADGES.slice(0, 3)) assert.ok(one.includes(label), `${label} is missing`);
+
+  const all = buildRecapSvg({ handle: "octocat", recap: recapWithBadges(ALL_BADGES), theme: "light" });
+  assert.equal(pillsIn(all).length, 7, "every badge earned is shown, none dropped");
+  assert.equal(heightOf(all), 374, "two rows");
+});
+
+test("no pill overflows the card or collides with the footer", () => {
+  /*
+   * Wrapped rather than truncated or scaled: text spilling out of its pill reads as a rendering
+   * bug, and dropping a badge to save 20px is the wrong trade on the one artifact whose job is
+   * to show what somebody earned.
+   */
+  for (const n of [1, 3, 5, 7]) {
+    const svg = buildRecapSvg({ handle: "octocat", recap: recapWithBadges(ALL_BADGES.slice(0, n)), theme: "light" });
+    const pills = pillsIn(svg);
+    const height = heightOf(svg);
+
+    for (const p of pills) {
+      assert.ok(p.x >= 28, `${n} badges: a pill starts left of the margin`);
+      assert.ok(p.x + p.w <= 495 - 28, `${n} badges: a pill runs past the right margin`);
+    }
+    const lowest = Math.max(...pills.map((p) => p.y + 14));
+    assert.ok(lowest <= height - 14 - 4, `${n} badges: a pill collides with the footer`);
+
+    // Rows must not overlap each other either.
+    const ys = [...new Set(pills.map((p) => p.y))].sort((a, b) => a - b);
+    for (let i = 1; i < ys.length; i += 1) {
+      assert.ok(ys[i] - ys[i - 1] >= 14, `${n} badges: badge rows overlap`);
+    }
+  }
+});
+
+test("the pill outline survives a dark card", () => {
+  /* `.lg` only carries fills, so an outline drawn with it would keep the light stroke on a dark
+     ground and read as a grey box. */
+  const auto = buildRecapSvg({ handle: "octocat", recap: recapWithBadges(ALL_BADGES), theme: "auto" });
+  assert.match(auto, /\.bg\{stroke:/, "no dark rule for the pill outline");
+  assert.equal((auto.match(/class="bg"/g) ?? []).length, 7, "pills are not targetable by that rule");
+
+  const dark = buildRecapSvg({ handle: "octocat", recap: recapWithBadges(ALL_BADGES), theme: "dark" });
+  assert.ok(!dark.includes('stroke="#55554E"'), "a dark card kept the light stroke");
+});
