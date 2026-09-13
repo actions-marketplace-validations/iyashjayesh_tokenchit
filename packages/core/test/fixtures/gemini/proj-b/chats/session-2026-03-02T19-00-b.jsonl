@@ -1,0 +1,1 @@
+{"id": "m3", "timestamp": "2026-03-02T14:00:00.000Z", "type": "gemini", "model": "gemini-2.5-flash", "tokens": {"input": 500, "output": 40, "cached": 100, "thoughts": 10, "tool": 25, "total": 575}}

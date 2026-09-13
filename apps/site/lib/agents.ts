@@ -83,6 +83,26 @@ export const AGENT_PAGES: AgentPage[] = [
         "priced so you can see how much of the figure is covered.",
     },
   },
+  {
+    key: "gemini",
+    label: "gemini",
+    name: "Gemini CLI",
+    source: "~/.gemini/tmp/*/chats/*.jsonl",
+    what:
+      "Gemini CLI records each model turn in a chat recording, one JSON object per line. Only " +
+      "turns written by recent versions carry a `tokens` object; the rest of the line — the " +
+      "prompt, the reply, the project hash — is never read.",
+    caveat: {
+      heading: "Older sessions carry no counts at all",
+      body:
+        "Token recording is a recent addition upstream, so an installation whose recordings " +
+        "predate it is genuinely uncountable rather than empty. Measured on one machine while " +
+        "the adapter was written: 2 of 2,141 session files carried any token field. tokenchit " +
+        "reports that as a partial state rather than showing a confident zero, and counts what " +
+        "it can actually read. Gemini's own models have no public per-token price yet, so they " +
+        "contribute tokens and no cost.",
+    },
+  },
 ];
 
 export const agentPage = (key: string): AgentPage | undefined =>
@@ -94,15 +114,15 @@ export const agentPage = (key: string): AgentPage | undefined =>
  * Named on every agent page rather than omitted: "tokenchit does not see Copilot" and
  * "Copilot does not record what tokenchit would need" are different claims, and only one of
  * them is a bug worth filing.
+ *
+ * Gemini CLI used to be here. It records token counts in recent versions and is a real adapter
+ * now, with a page of its own above — kept in mind because this list saying otherwise for a
+ * whole release is exactly the drift `agents.test.js` now guards against.
  */
 export const UNSUPPORTED = [
   {
     name: "Copilot CLI",
     reason: "records only a live context gauge, so there is no per-call token count to read.",
-  },
-  {
-    name: "Gemini CLI",
-    reason: "writes transcripts that carry no token counts at all.",
   },
 ] as const;
 

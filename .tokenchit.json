@@ -3,7 +3,8 @@
   "agents": [
     "claude-code",
     "codex",
-    "opencode"
+    "opencode",
+    "gemini"
   ],
   "output": "tokenchit.svg",
   "layout": "default",

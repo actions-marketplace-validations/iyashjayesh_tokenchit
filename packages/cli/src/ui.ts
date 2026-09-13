@@ -234,6 +234,30 @@ export function spin(label: string): Spinner {
  * not actionable by the person running `tokenchit sync`, and it lands in the middle of the
  * output. Every other warning is re-emitted so nothing real is swallowed.
  */
+/**
+ * Let the output pipe close without a stack trace.
+ *
+ * `tokenchit ledger | head -3` is an ordinary thing to type, and `head` closes the pipe the
+ * moment it has its three lines. Every later write then fails with EPIPE, which Node raises as
+ * an unhandled `error` event on stdout — so a standard Unix idiom ended with a crash dump and a
+ * non-zero exit, and `| less` did the same to anyone who quit before the end.
+ *
+ * It only bit the commands that do asynchronous work *between* writes: a `--json` command scans
+ * first and writes once, so its single write lands in the pipe buffer before the reader is gone.
+ * That is why it looked intermittent rather than systematic.
+ *
+ * Exiting 0 is the correct response, not a swallowed error. The reader asked for less output
+ * than there was; nothing failed. This is what every well-behaved Unix tool does.
+ */
+export function tolerateClosedOutput(): void {
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE") process.exit(0);
+      throw err;
+    });
+  }
+}
+
 export function muteSqliteWarning(): void {
   const listeners = process.listeners("warning");
   for (const l of listeners) process.removeListener("warning", l);

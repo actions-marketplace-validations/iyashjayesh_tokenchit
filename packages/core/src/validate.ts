@@ -276,6 +276,18 @@ export function validatePayload(p: Payload, now: Date = new Date()): string[] {
     // text node; nothing legitimate uses them in an agent or model id.
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001F\u007F]/.test(value)) fail(`${field} contains control characters`);
+    /*
+     * Names that are not names.
+     *
+     * An agent or model id becomes an object key wherever this data is grouped, and `__proto__`
+     * turns that assignment into a write to `Object.prototype`. Every consumer in this repo
+     * either uses a `Map` or coerces to a number, so none is exploitable today — which is
+     * exactly why this belongs at the ingest boundary rather than in each of them. Nothing
+     * legitimate is called any of these, so refusing costs nobody a submission.
+     */
+    if (value === "__proto__" || value === "constructor" || value === "prototype") {
+      fail(`${field} is not a usable name`);
+    }
   }
 
   for (const [name, value] of [

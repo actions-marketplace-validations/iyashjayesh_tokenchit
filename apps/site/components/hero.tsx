@@ -30,7 +30,7 @@ export function Hero({ preview, totals }: { preview: Featured; totals: BoardTota
         </h1>
 
         <p className={styles.lede}>
-          tokenchit reads your local Claude Code, Codex and OpenCode logs and renders one
+          tokenchit reads your local Claude Code, Codex, Gemini CLI and OpenCode logs and renders one
           embeddable card straight into your repo. The card is a file you commit, not a URL
           you depend on — nothing to rate-limit, nothing to go down, and it keeps working if
           this site does not.

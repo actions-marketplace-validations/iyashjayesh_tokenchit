@@ -90,8 +90,8 @@ export default async function Image() {
               maxWidth: 900,
             }}
           >
-            Reads Claude Code, Codex and OpenCode logs on your own machine and renders a stat
-            card you commit to your repo — a file, not a badge you rent.
+            Reads Claude Code, Codex, Gemini CLI and OpenCode logs on your own machine and renders
+            a stat card you commit to your repo — a file, not a badge you rent.
           </div>
         </div>
 

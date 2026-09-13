@@ -25,7 +25,7 @@ const mono = JetBrains_Mono({
 
 /** One sentence, shared by the page description and both preview cards so they cannot drift. */
 const DESCRIPTION =
-  "tokenchit reads your local Claude Code, Codex and OpenCode logs and renders one embeddable card straight into your repo. A file you commit, not a URL you depend on.";
+  "tokenchit reads your local Claude Code, Codex, Gemini CLI and OpenCode logs and renders one embeddable card straight into your repo. A file you commit, not a URL you depend on.";
 
 export const metadata: Metadata = {
   // Without this, relative metadata URLs resolve against the request origin, so a profile

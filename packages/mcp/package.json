@@ -8,6 +8,7 @@
     "claude-code",
     "codex",
     "opencode",
+    "gemini",
     "tokens",
     "usage",
     "ai-agents"

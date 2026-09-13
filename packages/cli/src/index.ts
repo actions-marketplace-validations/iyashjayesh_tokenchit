@@ -5,6 +5,7 @@ import { hook } from "./commands/hook.js";
 import { init } from "./commands/init.js";
 import { login, logout, whoami } from "./commands/login.js";
 import { publish } from "./commands/publish.js";
+import { doctor } from "./commands/doctor.js";
 import { recap } from "./commands/recap.js";
 import { ledger } from "./commands/ledger.js";
 import { schedule } from "./commands/schedule.js";
@@ -19,7 +20,7 @@ import {
   usage,
   valuedFlags,
 } from "./help.js";
-import { bold, dim, fail, muteSqliteWarning, say } from "./ui.js";
+import { bold, dim, fail, muteSqliteWarning, say, tolerateClosedOutput } from "./ui.js";
 
 /** "did you mean" for a name that missed, printed before the usage screen scrolls it away. */
 function suggest(typed: string): void {
@@ -50,6 +51,8 @@ function checkNode(): boolean {
 
 async function main(): Promise<number> {
   if (!checkNode()) return 1;
+  // Before anything writes, or the first line into a closed pipe is already a crash.
+  tolerateClosedOutput();
   muteSqliteWarning();
 
   const [command, ...argv] = process.argv.slice(2);
@@ -105,6 +108,8 @@ async function main(): Promise<number> {
       return sync(argv);
     case "recap":
       return recap(argv);
+    case "doctor":
+      return doctor(argv);
     case "publish":
       return publish(argv, cliVersion());
     case "schedule":

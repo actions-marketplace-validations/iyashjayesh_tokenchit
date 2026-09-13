@@ -132,6 +132,7 @@ export const BOARD_AGENTS = [
   { key: "claude-code", label: "claude code" },
   { key: "codex", label: "codex" },
   { key: "opencode", label: "opencode" },
+  { key: "gemini", label: "gemini" },
 ] as const;
 
 export type BoardAgent = (typeof BOARD_AGENTS)[number]["key"];

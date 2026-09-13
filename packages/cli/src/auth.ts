@@ -40,9 +40,17 @@ export async function readAuth(): Promise<Auth | null> {
 
 export async function writeAuth(auth: Auth): Promise<string> {
   const path = authPath();
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(auth, null, 2)}\n`, "utf8");
-  // Written before anyone else can read it: 0600, owner only.
+  // 0700: the directory holds a credential and a record of when this machine works.
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  /*
+   * 0600 set at *create* time, not chmod'ed after.
+   *
+   * This holds a credential. `writeFile` then `chmod` leaves a window — however short — in
+   * which the token sits on disk readable by every account on the machine, and on a shared box
+   * that window is all an attacker needs. `mode` only applies when the file is created, so the
+   * chmod stays behind it to repair a file an older version already wrote at 0644.
+   */
+  await writeFile(path, `${JSON.stringify(auth, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(path, 0o600);
   return path;
 }

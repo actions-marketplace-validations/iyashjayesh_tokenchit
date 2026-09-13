@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+import { count, when } from "../types.js";
 import type { Adapter, Detection, UsageEvent } from "../types.js";
 import { walkFiles } from "./walk.js";
 
@@ -23,6 +24,8 @@ type CodexLine = {
   payload?: {
     type?: string;
     model?: string;
+    /** Only on the `session_meta` row. Carried for ledger merging; never displayed. */
+    session_id?: string;
     info?: { total_token_usage?: TokenUsage } | null;
   };
 };
@@ -74,6 +77,9 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
   });
 
   let usage: TokenUsage | null = null;
+  /* The rollout's own session id, from its `session_meta` row. Read from the file's contents
+     rather than parsed out of its name: the name is a path, and paths are not collected. */
+  let sessionId: string | undefined;
   /*
    * The counter's value before this session did any work.
    *
@@ -92,12 +98,24 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
   let model = "unknown";
 
   for await (const line of lines) {
-    if (!line.includes('"token_count"') && !line.includes('"model"')) continue;
+    // `session_meta` carries neither, so it has to be let through the cheap prefilter.
+    if (
+      !line.includes('"token_count"') &&
+      !line.includes('"model"') &&
+      !line.includes('"session_meta"')
+    ) {
+      continue;
+    }
 
     let row: CodexLine;
     try {
       row = JSON.parse(line) as CodexLine;
     } catch {
+      continue;
+    }
+
+    if (row.type === "session_meta") {
+      if (typeof row.payload?.session_id === "string") sessionId = row.payload.session_id;
       continue;
     }
 
@@ -119,8 +137,8 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
 
   if (!usage) return null;
 
-  const ts = at ? new Date(at) : null;
-  if (!ts || Number.isNaN(ts.getTime())) return null;
+  const ts = when(at);
+  if (!ts) return null;
 
   /*
    * The growth across this file, not its final reading. Clamped at zero because a counter is
@@ -128,7 +146,7 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
    * than a negative.
    */
   const grew = (field: keyof TokenUsage) =>
-    Math.max(0, (usage![field] ?? 0) - (baseline === usage ? 0 : (baseline?.[field] ?? 0)));
+    Math.max(0, count(usage![field]) - (baseline === usage ? 0 : count(baseline?.[field])));
 
   // Codex reports cached input inside `input_tokens`, not beside it, so subtracting keeps
   // the four buckets disjoint and the sum equal to the total it reports.
@@ -143,5 +161,10 @@ async function lastTotal(file: string): Promise<UsageEvent | null> {
       output: grew("output_tokens"),
       cacheWrite: 0,
       cacheRead,
+      /* One event carries a whole rollout's growth, stamped at its last turn — see the note
+         at the top of this file. The moment is real, so it is evidence; it is a session's
+         work reported at a single instant, so it is not exact. */
+      tsPrecision: "session",
+      ...(sessionId ? { sourceId: sessionId } : {}),
   };
 }
