@@ -168,16 +168,25 @@ async function walk(dir) {
 
 test("payload.noContent.everyAdapter", async () => {
   /*
-   * The guarantee is "we never collect content", and until now one adapter of three was made to
-   * prove it. `payload.noContent` runs with `agents: ["claude-code"]`, so a Codex or OpenCode
+   * The guarantee is "we never collect content", and it was once proved for one adapter out of
+   * three. `payload.noContent` runs with `agents: ["claude-code"]`, so a Codex or OpenCode
    * adapter that copied a prompt, a path or a model-supplied string into an event would have
    * sailed through the whole suite — the fixture home did not even contain a rollout or a
    * database for them to read.
    *
    * Each fixture carries content in a different shape: Codex a user_message and an
-   * agent_message beside a cwd, OpenCode a reply and a path inside the JSON blob the adapter
-   * parses. Both also carry real usage, so the assertions below cannot pass by reading nothing.
+   * agent_message beside a cwd; OpenCode a reply and a path inside the JSON blob the adapter
+   * parses; Gemini a `content` field holding the prompt and the reply verbatim, plus a
+   * `projectHash` identifying the working directory — which is outside the contract hashed or
+   * not. All of them also carry real usage, so the assertions below cannot pass by reading
+   * nothing.
+   *
+   * The coverage assertion is derived from the adapter registry rather than listed here.
+   * Gemini shipped as a fourth adapter and this test went on proving the guarantee for three,
+   * silently, because a hardcoded list cannot notice what it does not mention.
    */
+  const { adapters } = await import("@tokenchit/core/adapters");
+
   const { stdout } = await cli(["publish", "--dry-run"], {}, []);
   const body = payloadFrom(stdout);
 
@@ -185,6 +194,9 @@ test("payload.noContent.everyAdapter", async () => {
     "CANARY_CODEX_PROMPT_a7f3",
     "CANARY_CODEX_REPLY_a7f3",
     "CANARY_OPENCODE_REPLY_a7f3",
+    "CANARY_GEMINI_PROMPT_a7f3",
+    "CANARY_GEMINI_REPLY_a7f3",
+    "CANARY_GEMINI_PROJECTHASH_a7f3",
     "secret-project",
   ]) {
     assert.ok(!body.includes(canary), `${canary} leaked into the payload`);
@@ -192,7 +204,18 @@ test("payload.noContent.everyAdapter", async () => {
 
   const parsed = JSON.parse(body);
   const agents = Object.fromEntries(parsed.agents.map((a) => [a.agent, a.tokens]));
+
   assert.equal(agents["codex"], 1000, "the codex rollout really was read");
   assert.equal(agents["opencode"], 500, "and so was the opencode database");
+  assert.equal(agents["gemini"], 650, "and the gemini recording");
   assert.ok(agents["claude-code"] > 0, "and claude-code alongside them");
+
+  /* Every adapter this build ships must have contributed. A new one with no fixture fails
+     here rather than quietly narrowing what this test proves. */
+  for (const adapter of adapters) {
+    assert.ok(
+      agents[adapter.id] > 0,
+      `${adapter.id} contributed nothing — add a fixture so the no-content guarantee covers it`,
+    );
+  }
 });

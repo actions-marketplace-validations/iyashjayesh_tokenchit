@@ -62,9 +62,13 @@ npx -y @tokenchit/cli@latest recap    # the year in review, a second committable
 | **Claude Code** | `~/.claude*/projects/**/*.jsonl` — every profile directory, not just the default |
 | **Codex** | `~/.codex/sessions/**/rollout-*.jsonl` |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` |
+| **Gemini CLI** | `~/.gemini/tmp/*/chats/*.jsonl` |
 
-Copilot CLI and Gemini CLI are detected and reported as unsupported: Copilot records only a
-live context gauge, and Gemini's transcripts carry no token counts.
+Gemini records token counts only in recent versions, so an installation whose recordings all
+predate that is reported as detected-but-uncountable rather than as a confident zero.
+
+Copilot CLI is detected and reported as unsupported: it records only a live context gauge,
+never a cumulative total.
 
 **Your numbers will not match Claude Code's Stats panel.** It counts an API call once per
 streaming rewrite, so it reads roughly twice as high. `sync` prints both figures and the gap.

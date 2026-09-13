@@ -877,3 +877,84 @@ image was re-rendered to confirm the longer string still wraps cleanly rather th
 Comments and docs that name the older three for a *historical* reason — a note about a specific
 rebuild bug, an incident in `claude-context.ts`, the stats-cache note in `internals.md` — were
 left alone. They are accurate as written and are not a list of supported agents.
+
+## QA round five — the copy gap was a symptom; here is the disease
+
+Round four found six sentences that still named three agents. Fixing the sentences was not
+fixing the problem: **nothing tied any prose to the adapter registry**, so adding an adapter
+meant remembering to update a list nobody had written down. Looking around it found nine more
+places, two of which were not omissions but false statements.
+
+### Both READMEs said Gemini could not be counted
+
+`README.md` and `packages/cli/README.md` each carried a supported-agents table without Gemini,
+followed by a sentence asserting that **"Copilot CLI and Gemini CLI are detected but cannot be
+counted... Gemini's chat transcripts carry no token counts at all."** That is the opposite of
+the truth, it is near the top of the first file anyone opens, and it survived the whole of
+Stage 2. Both now list Gemini with its real source path and reserve the unsupported paragraph
+for Copilot alone.
+
+### The site advertised and disclaimed the same agent
+
+`apps/site/lib/agents.ts` had Gemini in `UNSUPPORTED` — "writes transcripts that carry no token
+counts at all" — while the board filtered by it and the icon table coloured it. Gemini now has a
+full agent page of its own, with the measured caveat that matters (token recording is recent
+upstream; 2 of 2,141 session files on a real machine carried any token field), and the
+unsupported list names only Copilot. Verified by rendering `/tool/gemini`.
+
+### The privacy test proving "every adapter" covered three of four
+
+`payload.noContent.everyAdapter` exists precisely so the no-content guarantee is not proved for
+one adapter and assumed for the rest. It listed its adapters by hand, so when Gemini shipped the
+test went on passing while silently covering three of four — and Gemini is the adapter with the
+most sensitive material adjacent to the counts: a `content` field holding the prompt and reply
+verbatim, and a `projectHash` identifying the working directory, which is outside the contract
+hashed or not.
+
+There is now a Gemini fixture carrying all three as canaries, and the coverage assertion is
+**derived from the registry**: every adapter this build ships must contribute non-zero tokens,
+so a new adapter with no fixture fails rather than quietly narrowing what the test proves.
+
+Both halves were mutation-tested. Removing the fixture fails the test; making the adapter copy
+the reply text into an event fails it with `CANARY_GEMINI_REPLY_a7f3 leaked into the payload`.
+(A first attempt at the second mutation silently did not apply — worth recording, because a
+mutation that no-ops looks exactly like a guarantee that holds.)
+
+### Smaller, and real
+
+- **`.tokenchit.json`** — this repo's own config omitted `gemini`, so its own published card
+  excluded its own Gemini usage. `doctor` had been saying so all along: *"present but not in
+  .tokenchit.json — its usage is excluded"*. Now included; the card counts its 1.61M.
+- **npm keywords** in both published packages omitted `gemini`, so an npm search for it found
+  nothing.
+- **`banner.html`** and the site's sample recap data still described three agents.
+
+### The durable fix
+
+`apps/site/test/agents.test.js` ties the prose to the registry:
+
+| Check | Catches |
+| --- | --- |
+| a page per supported adapter, and no others | an adapter added or removed without the site following |
+| each page's `source` equals its adapter's | a documented path drifting from the real one |
+| `UNSUPPORTED` equals core's probes | an agent moving between states one-sidedly |
+| nothing is both supported and unsupported | exactly the Gemini contradiction |
+| the board filters every adapter | a missing filter |
+| both READMEs contain every adapter's source path | the README gap, by path so a passing mention cannot satisfy it |
+| no user-facing prose matches the stale three-agent sentence | the six copy lines from round four |
+
+Checking by **source path** rather than by name is deliberate: a path is verbatim from the
+adapter, so the assertion cannot be satisfied by the name appearing incidentally elsewhere in
+the file.
+
+Prose cannot be generated from the registry — each agent page is a real piece of writing. But it
+can be checked against it, and that is the difference between a list that drifts and one that
+cannot.
+
+**It found a second bug on its first run:** `packages/cli/README.md` documented Claude Code's
+source as `~/.claude/projects/**/*.jsonl`, but the adapter reads `~/.claude*/` — every profile
+directory, not just the default. A reader with a non-default Claude profile would have concluded
+their logs were not covered.
+
+Both guards were mutation-tested by deleting the Gemini page and by reverting the README row;
+each failed the intended assertion and passed again on restore.
