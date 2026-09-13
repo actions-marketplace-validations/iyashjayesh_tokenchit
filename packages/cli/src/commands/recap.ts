@@ -129,7 +129,10 @@ export async function recap(argv: string[]): Promise<number> {
 
   if (periodFlag) return reportPeriod(stats, periodFlag, handle, json, ledger.since);
 
-  const r = buildRecap(stats, { year });
+  /* `ledger.since` is the first day this machine can speak for. Without it a year that simply
+     predates the install reads as a collapse in usage — a statement about an install date
+     dressed up as a statement about how much somebody worked. */
+  const r = buildRecap(stats, { year, historyFrom: ledger.since });
 
   /* Said out loud here as in `sync`: a recap that silently includes days the transcripts no
      longer hold invites the reader to check it against their logs and find it wrong. */
@@ -205,6 +208,24 @@ export async function recap(argv: string[]): Promise<number> {
   if (r.biggestDay) {
     say();
     say(`  ${dim("biggest day")}  ${bold(r.biggestDay.day)} ${dim("·")} ${bold(r.biggestDay.display)} ${dim("tokens")}`);
+  }
+
+  /* Printed next to the headline it qualifies, and the reason is printed in place of a
+     percentage rather than a dash: a gap where a number belongs is exactly what a reader
+     fills in with an assumption. */
+  if (r.previousYear) {
+    const p = r.previousYear;
+    say();
+    if (p.reason === "comparable") {
+      const sign = p.deltaTokens >= 0 ? "+" : "−";
+      const pctText = p.deltaPct === null ? "" : ` ${dim(`(${p.deltaPct >= 0 ? "+" : ""}${p.deltaPct.toFixed(0)}%)`)}`;
+      say(
+        `  ${dim(`vs ${p.year}`)}  ${bold(p.display)} ${dim("tokens")}  ${dim("→")}  ` +
+          `${sign}${formatTokens(Math.abs(p.deltaTokens))}${pctText}`,
+      );
+    } else {
+      say(`  ${dim(`vs ${p.year}`)}  ${dim("no comparison:")} ${dim(p.detail)}`);
+    }
   }
 
   if (r.badges.length > 0) {

@@ -195,7 +195,8 @@ export const tools: Tool[] = [
   {
     name: "get_recap",
     description:
-      "Year in review for one calendar year: headline tiles, per-agent and per-model " +
+      "Year in review for one calendar year: headline tiles, monthly breakdown, biggest day, " +
+      "activity badges, a comparison against the year before, per-agent and per-model " +
       "breakdown, the busiest hour range, and activity aggregated by weekday and hour (not " +
       "by date). The same figures `tokenchit recap` renders.",
     inputSchema: {
@@ -214,8 +215,8 @@ export const tools: Tool[] = [
     async run(args) {
       const now = new Date();
       const year = asYear(args.year, now);
-      const { stats } = await read(asAgents(args.agents), year);
-      const recap = buildRecap(stats, { year });
+      const { stats, historyFrom } = await read(asAgents(args.agents), year);
+      const recap = buildRecap(stats, { year, historyFrom });
 
       return {
         year: recap.year,
@@ -223,6 +224,18 @@ export const tools: Tool[] = [
         agents: recap.agents,
         models: recap.models,
         peakHours: recap.peak,
+        /* How much of the total actually had an observed clock behind it. A model quoting
+           "peak hours" without this would be repeating a figure partly derived from timestamps
+           this tool synthesised. */
+        peakClockCoverage: Number(recap.peakCoverage.toFixed(4)),
+        months: recap.months.map((m) => ({ month: m.month, tokens: m.tokens })),
+        biggestDay: recap.biggestDay,
+        /* Deterministic activity patterns, with the rule that earned each one. The detail is
+           included so a model can say *why* rather than just asserting the label. */
+        badges: recap.badges.map((b) => ({ id: b.id, label: b.label, detail: b.detail })),
+        /* Null `deltaPct` is not zero: it means the previous year cannot support a percentage,
+           and `reason` says which of the several causes it was. */
+        previousYear: recap.previousYear,
         activeDays: recap.activeDays,
         tokens: recap.tokens,
         /*

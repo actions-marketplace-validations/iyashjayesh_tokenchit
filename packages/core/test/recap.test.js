@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { aggregate, buildRecap, buildRecapSvg, RAMP, WEEKDAYS } from "../dist/index.js";
+import { aggregate, buildBadges, buildRecap, buildRecapSvg, RAMP, WEEKDAYS } from "../dist/index.js";
 
 /** An event at a given local weekday-and-hour. 2026-05-18 is a Monday. */
 const at = (mondayOffset, hour, tokens = 1000) => ({
@@ -281,4 +281,142 @@ test("no badge rewards spending or raw volume", async () => {
       `badge ${b.id} must not celebrate volume`,
     );
   }
+});
+
+/* ---------------------------------------------------------------- *
+ * Locked In, Model Gambler, and year-over-year
+ * ---------------------------------------------------------------- */
+
+const stamp = (y, mo, d, h, mi, over = {}) => ({
+  agent: "claude-code",
+  ts: new Date(y, mo, d, h, mi, 0),
+  model: "claude-opus-5",
+  input: 1000,
+  output: 0,
+  cacheWrite: 0,
+  cacheRead: 0,
+  sourceId: "s1",
+  ...over,
+});
+
+const streamOf = async function* (events) {
+  for (const e of events) yield e;
+};
+
+test("a resumed session is not one enormous sitting", async () => {
+  /*
+   * The trap this guards, found by measuring before implementing. Claude Code sessions are
+   * resumed days or weeks later, so first-to-last within a session reaches 792 hours on a real
+   * corpus. Reporting that as "longest session" would have been a plausible, confident lie:
+   * two hours of work either side of a fortnight's gap.
+   */
+  const events = [
+    // Forty minutes of continuous work, in steps under the 30-minute idle threshold...
+    stamp(2026, 4, 1, 9, 0),
+    stamp(2026, 4, 1, 9, 20),
+    stamp(2026, 4, 1, 9, 40),
+    // ...then the same session resumed a fortnight later, for twenty more.
+    stamp(2026, 4, 15, 9, 0),
+    stamp(2026, 4, 15, 9, 20),
+  ];
+
+  const stats = await aggregate(streamOf(events));
+  assert.ok(stats.focus, "nothing was measured");
+  assert.equal(stats.focus.longestStretchMin, 40, "the fortnight-long gap was counted as work");
+  assert.equal(stats.focus.stretches, 2, "a resumed session is two stretches, not one");
+});
+
+test("a stretch ends at a long idle gap, not at a short one", async () => {
+  const stats = await aggregate(
+    streamOf([
+      stamp(2026, 4, 1, 9, 0),
+      stamp(2026, 4, 1, 9, 20), // 20 min gap: same sitting
+      stamp(2026, 4, 1, 9, 40),
+      stamp(2026, 4, 1, 12, 0), // 140 min gap: a new one
+      stamp(2026, 4, 1, 12, 10),
+    ]),
+  );
+  assert.equal(stats.focus.longestStretchMin, 40);
+  assert.equal(stats.focus.stretches, 2);
+});
+
+test("Locked In needs observed clocks, and enough of them", async () => {
+  /* Four hours of continuous work: an event every twenty minutes, so no gap reaches the
+     thirty-minute threshold that would split it. */
+  const continuous = [];
+  for (let m = 0; m <= 240; m += 20) continuous.push(stamp(2026, 4, 1, 9, m));
+
+  // A single long stretch is not evidence of a habit, so the badge needs a corpus behind it.
+  const one = await aggregate(streamOf(continuous));
+  assert.equal(one.focus.longestStretchMin, 240, "four hours of unbroken work");
+  assert.ok(one.focus.stretches < 20, "and only a handful of stretches behind it");
+  assert.equal(
+    buildBadges(one).some((b) => b.id === "locked-in"),
+    false,
+    "one stretch should not earn it",
+  );
+
+  /* A ledger replay carries a real date and an invented noon. Letting that define a sitting
+     would manufacture one that never happened. */
+  const replayed = await aggregate(
+    streamOf([
+      stamp(2026, 4, 1, 12, 0, { tsPrecision: "day", sourceId: undefined }),
+      stamp(2026, 4, 2, 12, 0, { tsPrecision: "day", sourceId: undefined }),
+    ]),
+  );
+  assert.equal(replayed.focus, null, "synthesised clocks must not produce a stretch");
+});
+
+test("Model Gambler needs three models carrying real weight", async () => {
+  const mix = (models) =>
+    streamOf(models.map((m, i) => stamp(2026, 4, (i % 20) + 1, 10, 0, { model: m.model, input: m.tokens })));
+
+  // Two heavy models and a tail: a provider rotating a snapshot date is not a gamble.
+  const two = await aggregate(
+    mix([
+      { model: "opus", tokens: 5000 },
+      { model: "sonnet", tokens: 4000 },
+      { model: "haiku", tokens: 100 },
+    ]),
+  );
+  assert.equal(buildBadges(two).some((b) => b.id === "model-gambler"), false);
+
+  const three = await aggregate(
+    mix([
+      { model: "opus", tokens: 4000 },
+      { model: "sonnet", tokens: 3000 },
+      { model: "haiku", tokens: 3000 },
+    ]),
+  );
+  assert.equal(buildBadges(three).some((b) => b.id === "model-gambler"), true);
+});
+
+test("byYear survives the year filter, because the comparison depends on it", async () => {
+  const stats = await aggregate(
+    streamOf([stamp(2025, 4, 1, 10, 0, { input: 500 }), stamp(2026, 4, 1, 10, 0, { input: 1500 })]),
+    { year: 2026 },
+  );
+  assert.equal(stats.tokens, 1500, "the scoped total describes the year asked for");
+  assert.equal(stats.byYear.get(2025), 500, "and the year before it is still available");
+  assert.equal(stats.byYear.get(2026), 1500);
+});
+
+test("a year that predates recorded history is not a collapse in usage", async () => {
+  const stats = await aggregate(
+    streamOf([stamp(2025, 4, 1, 10, 0, { input: 500 }), stamp(2026, 4, 1, 10, 0, { input: 1500 })]),
+  );
+
+  const honest = buildRecap(stats, { year: 2026, historyFrom: "2024-01-01" });
+  assert.equal(honest.previousYear.reason, "comparable");
+  assert.equal(honest.previousYear.deltaPct, 200, "500 to 1500 is +200%");
+
+  // Installed part-way through the baseline year: the percentage measures the install date.
+  const partial = buildRecap(stats, { year: 2026, historyFrom: "2025-06-01" });
+  assert.equal(partial.previousYear.reason, "partial-baseline");
+  assert.equal(partial.previousYear.deltaPct, null, "a percentage was shown anyway");
+
+  // Installed after the baseline year ended entirely.
+  const none = buildRecap(stats, { year: 2026, historyFrom: "2026-01-01" });
+  assert.notEqual(none.previousYear.reason, "comparable");
+  assert.equal(none.previousYear.deltaPct, null);
 });
