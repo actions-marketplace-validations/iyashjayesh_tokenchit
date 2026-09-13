@@ -191,6 +191,24 @@ type LedgerV1 = {
   days?: Record<string, Record<string, Record<string, Bucket>>>;
 };
 
+/**
+ * Keys that are not data, whatever a file claims.
+ *
+ * The ledger is built by walking untrusted trees — an imported export, or a ledger.json
+ * somebody hand-edited — and assigning into nested objects with `??=`. An agent or model key
+ * of `__proto__` turns that assignment into a write to `Object.prototype`, which is a real
+ * attack and not a theoretical one: it was reachable from a crafted import file before this
+ * existed, and it poisons every object in the process, not just this ledger.
+ *
+ * Refused rather than escaped. No agent, model, day, session digest or origin is ever legally
+ * named any of these, so there is nothing to preserve and nothing to encode.
+ */
+const UNSAFE_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+/** Whether a key read from an untrusted tree may be used as an object key. */
+export const safeKey = (k: unknown): k is string =>
+  typeof k === "string" && k.length > 0 && !UNSAFE_KEYS.has(k);
+
 export const isBucket = (v: unknown): v is Bucket =>
   Array.isArray(v) &&
   v.length === 4 &&
@@ -265,8 +283,42 @@ export function adopt(parsed: unknown): Ledger {
        independent work under the max rule. */
     origin: typeof raw.origin === "string" && raw.origin ? raw.origin : base.origin,
     tz: typeof raw.tz === "string" && raw.tz ? raw.tz : base.tz,
-    days: raw.days as Ledger["days"],
+    /* Sanitised on the way in, because this tree may have been hand-edited. Everything
+       downstream assigns into it. */
+    days: sanitiseDays(raw.days),
   };
+}
+
+/** Copy a `day -> agent -> model -> Cell` tree, dropping anything unusable. */
+function sanitiseDays(days: unknown): Ledger["days"] {
+  const out: Ledger["days"] = {};
+  if (!days || typeof days !== "object") return out;
+
+  for (const [day, byAgent] of Object.entries(days as Record<string, unknown>)) {
+    if (!safeKey(day) || !byAgent || typeof byAgent !== "object") continue;
+
+    for (const [agent, models] of Object.entries(byAgent as Record<string, unknown>)) {
+      if (!safeKey(agent) || !models || typeof models !== "object") continue;
+
+      for (const [model, cell] of Object.entries(models as Record<string, unknown>)) {
+        if (!safeKey(model) || !cell || typeof cell !== "object") continue;
+        const raw = cell as { s?: unknown; u?: unknown };
+
+        const clean: Cell = { s: {} };
+        for (const [digest, b] of Object.entries((raw.s ?? {}) as Record<string, unknown>)) {
+          if (safeKey(digest) && isBucket(b)) clean.s[digest] = b;
+        }
+        for (const [origin, b] of Object.entries((raw.u ?? {}) as Record<string, unknown>)) {
+          if (safeKey(origin) && isBucket(b)) (clean.u ??= {})[origin] = b;
+        }
+
+        if (Object.keys(clean.s).length > 0 || clean.u) {
+          ((out[day] ??= {})[agent] ??= {})[model] = clean;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -306,6 +358,14 @@ export function bank(
   source: string | null,
   b: Bucket,
 ): void {
+  /* Refused here as well as at validation. This is the only function that creates the nested
+     objects, so it is the one place a poisoned key could turn an assignment into a write to
+     `Object.prototype` — and it is reached from imports, from scans and from a ledger read off
+     disk, so guarding the callers one at a time would be a worse guarantee. */
+  if (!safeKey(day) || !safeKey(agent) || !safeKey(model)) return;
+  if (source !== null && !safeKey(source)) return;
+  if (!safeKey(ledger.origin)) return;
+
   const cell = (((ledger.days[day] ??= {})[agent] ??= {})[model] ??= { s: {} });
   cell.s ??= {};
 

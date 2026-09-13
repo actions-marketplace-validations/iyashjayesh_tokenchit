@@ -51,6 +51,13 @@ export async function recap(argv: string[]): Promise<number> {
   const periodFlag = has(argv, "--week") ? "week" : has(argv, "--month") ? "month" : null;
   const yearFlag = flag(argv, "--year");
 
+  /* Two periods is not a request this can honour, and quietly picking the first one is how a
+     reader ends up comparing the wrong window. `--week --year` already refused; this refused
+     nothing and silently reported the week. */
+  if (has(argv, "--week") && has(argv, "--month")) {
+    throw new Error("--week and --month each report one completed period. Pick one.");
+  }
+
   if (periodFlag && yearFlag) {
     throw new Error("--year scopes a whole year; --week and --month report a completed period. Pick one.");
   }

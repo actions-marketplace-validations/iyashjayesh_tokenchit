@@ -1,6 +1,7 @@
 import {
   foreignHistory,
   isBucket,
+  safeKey,
   ledgerSummary,
   localCells,
   sum,
@@ -171,6 +172,11 @@ export function validateExport(parsed: unknown): Valid | Invalid {
     const v = raw[field];
     if (typeof v !== "string" || !SAFE_RE.test(v)) fail(`${field} is missing or not a plain string`);
   }
+  /* The origin becomes an object key in every cell's `u` map, so it is held to the same rule
+     as the keys inside the tree rather than merely to "is a printable string". */
+  if (typeof raw["origin"] === "string" && !safeKey(raw["origin"])) {
+    fail("origin is not a usable identifier");
+  }
   if (typeof raw["since"] === "string" && !DAY_RE.test(raw["since"])) {
     fail("since is not a YYYY-MM-DD date");
   }
@@ -194,7 +200,7 @@ function checkDays(days: Record<string, unknown>, fail: (msg: string) => void, f
   }
 
   for (const day of dayKeys) {
-    if (!DAY_RE.test(day)) {
+    if (!DAY_RE.test(day) || !safeKey(day)) {
       fail(`${JSON.stringify(day)} is not a YYYY-MM-DD day`);
       continue;
     }
@@ -210,7 +216,7 @@ function checkDays(days: Record<string, unknown>, fail: (msg: string) => void, f
     }
 
     for (const [agent, models] of agents) {
-      if (!SAFE_RE.test(agent)) {
+      if (!SAFE_RE.test(agent) || !safeKey(agent)) {
         fail(`${day} has an unusable agent key`);
         continue;
       }
@@ -225,7 +231,7 @@ function checkDays(days: Record<string, unknown>, fail: (msg: string) => void, f
       }
 
       for (const [model, value] of modelEntries) {
-        if (!SAFE_RE.test(model)) {
+        if (!SAFE_RE.test(model) || !safeKey(model)) {
           fail(`${day}/${agent} has an unusable model key`);
           continue;
         }
@@ -256,7 +262,7 @@ function checkCell(value: unknown, where: string, fail: (msg: string) => void): 
         fail(`${where} names ${entries.length} sources`);
       } else {
         for (const [digest, b] of entries) {
-          if (!DIGEST_RE.test(digest)) fail(`${where} has a malformed source key`);
+          if (!DIGEST_RE.test(digest) || !safeKey(digest)) fail(`${where} has a malformed source key`);
           else if (!validBucket(b)) fail(`${where} has an invalid bucket`);
         }
       }
@@ -273,7 +279,7 @@ function checkCell(value: unknown, where: string, fail: (msg: string) => void): 
         fail(`${where} names ${entries.length} origins`);
       } else {
         for (const [origin, b] of entries) {
-          if (!SAFE_RE.test(origin)) fail(`${where} has an unusable origin key`);
+          if (!SAFE_RE.test(origin) || !safeKey(origin)) fail(`${where} has an unusable origin key`);
           else if (!validBucket(b)) fail(`${where} has an invalid bucket`);
         }
       }
@@ -320,6 +326,20 @@ export type ImportPreview = {
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+/** Every cell one session occupies on one machine, and what that machine says it is worth. */
+type Placement = {
+  coords: { day: string; agent: string; model: string; b: Bucket }[];
+  total: number;
+};
+
+/** Whether two placements describe the same set of cells, order-independently. */
+function sameCoords(a: Placement, b: Placement): boolean {
+  if (a.coords.length !== b.coords.length) return false;
+  const key = (c: Placement["coords"][number]) => `${c.day}|${c.agent}|${c.model}`;
+  const seen = new Set(a.coords.map(key));
+  return b.coords.every((c) => seen.has(key(c)));
+}
+
 const maxInto = (
   into: Record<string, Bucket>,
   k: string,
@@ -340,12 +360,29 @@ const maxInto = (
 /**
  * Merge an export into a ledger and describe what changed. Pure — neither input is mutated.
  *
- * The only subtlety is *relocation*. A source digest identifies one session globally, so the
- * same digest appearing under a different `(day, agent, model)` than this machine already
- * holds is not a second session — it is the same session the exporting machine filed under a
- * different local day, which is what a timezone difference looks like from here. Counting it
- * in both places would double it. It is therefore merged into the coordinate this machine
- * already has, and reported: the tokens are right, the day is ours.
+ * ## The merge unit is a session, not a cell
+ *
+ * A session digest identifies one piece of work globally, and that work can legitimately
+ * occupy **more than one `(day, agent, model)` cell**: a session running past midnight lands
+ * on two days, and a session that switches model lands on two models. So a session is merged
+ * as a whole — its total across every coordinate it touches — rather than cell by cell.
+ *
+ * For each digest, the value kept is the **largest total any one machine attributes to it**,
+ * and the day/model breakdown comes from that same machine. Both halves matter:
+ *
+ * - Taking the max across machines is the "max within one source" rule from `ledger.ts`,
+ *   lifted to the level where a source actually lives. Two machines holding one session are
+ *   holding one piece of work, however each of them split it up.
+ * - Taking the breakdown from the machine that reported the largest total keeps the split
+ *   coherent. Mixing one machine's Monday figure with another's Tuesday figure would bank a
+ *   distribution neither machine ever observed.
+ *
+ * Merging cell by cell instead was a real bug, caught by fuzzing multi-machine merges against
+ * a ground truth. Cell-by-cell with a single "home" coordinate per digest silently dropped
+ * every coordinate after the first, so importing a ledger in which any session crossed
+ * midnight lost that session's later day entirely. Cell-by-cell *without* a home coordinate
+ * double-counts the timezone case instead. Grouping by session is the rule that is right for
+ * both.
  */
 export function mergeExport(
   live: Ledger,
@@ -354,48 +391,112 @@ export function mergeExport(
   const next = clone(live);
   const before = ledgerSummary(live);
 
-  /** Where this machine already files each known session. */
-  const home = new Map<string, { day: string; agent: string; model: string }>();
-  for (const [day, byAgent] of Object.entries(live.days)) {
-    for (const [agent, models] of Object.entries(byAgent ?? {})) {
-      for (const [model, cell] of Object.entries(models ?? {})) {
-        for (const digest of Object.keys(cell?.s ?? {})) home.set(digest, { day, agent, model });
+  const held = (map: Map<string, Placement>, ledger: Ledger): void => {
+    for (const [day, byAgent] of Object.entries(ledger.days)) {
+      for (const [agent, models] of Object.entries(byAgent ?? {})) {
+        for (const [model, cell] of Object.entries(models ?? {})) {
+          for (const [digest, b] of Object.entries(cell?.s ?? {})) {
+            if (!isBucket(b)) continue;
+            const acc = map.get(digest) ?? { coords: [], total: 0 };
+            acc.coords.push({ day, agent, model, b });
+            acc.total += sum(b);
+            map.set(digest, acc);
+          }
+        }
       }
     }
-  }
+  };
+
+  /** Where each session sits, and what it is worth, on either side of the merge. */
+  const mine = new Map<string, Placement>();
+  held(mine, live);
+
+  const theirs = new Map<string, Placement>();
+  held(theirs, { ...live, days: inc.days ?? {} });
 
   const counts = { incoming: 0, added: 0, raised: 0, unchanged: 0 };
   let relocated = 0;
   const warnings: string[] = [];
 
-  const cellAt = (day: string, agent: string, model: string): Cell => {
+  /** Null for a coordinate that must never become an object key. See `safeKey`. */
+  const cellAt = (day: string, agent: string, model: string): Cell | null => {
+    if (!safeKey(day) || !safeKey(agent) || !safeKey(model)) return null;
     const c = (((next.days[day] ??= {})[agent] ??= {})[model] ??= { s: {} });
     c.s ??= {};
     return c;
   };
 
+  /** Write a session into every cell its winning placement names. */
+  const place = (digest: string, at: Placement): void => {
+    for (const c of at.coords) {
+      const cell = cellAt(c.day, c.agent, c.model);
+      if (cell) cell.s[digest] = c.b;
+    }
+  };
+
+  /** Take a session out of every cell it currently occupies, pruning what it empties. */
+  const evict = (digest: string, at: Placement): void => {
+    for (const { day, agent, model } of at.coords) {
+      const cell = next.days[day]?.[agent]?.[model];
+      if (!cell?.s) continue;
+      delete cell.s[digest];
+
+      // A cell with no sessions and no unidentified floor is a husk, not a record.
+      if (Object.keys(cell.s).length === 0 && !cell.u) {
+        delete next.days[day]![agent]![model];
+        if (Object.keys(next.days[day]![agent]!).length === 0) delete next.days[day]![agent];
+        if (Object.keys(next.days[day]!).length === 0) delete next.days[day];
+      }
+    }
+  };
+
+  for (const [digest, incoming] of theirs) {
+    counts.incoming += 1;
+    if (!safeKey(digest)) continue;
+
+    const existing = mine.get(digest);
+
+    if (!existing) {
+      place(digest, incoming);
+      counts.added += 1;
+      continue;
+    }
+
+    if (sameCoords(existing, incoming)) {
+      // Identical placement: the only question left is whose reading is fuller.
+      if (incoming.total > existing.total) {
+        place(digest, incoming);
+        counts.raised += 1;
+      } else {
+        counts.unchanged += 1;
+      }
+      continue;
+    }
+
+    /* Different placement for the same session. Either the exporting machine's timezone put it
+       on another date, or one side saw a part of it the other did not. The larger total is the
+       more complete observation, and its breakdown travels with it. */
+    relocated += 1;
+    if (incoming.total > existing.total) {
+      evict(digest, existing);
+      place(digest, incoming);
+      counts.raised += 1;
+    } else {
+      counts.unchanged += 1;
+    }
+  }
+
+  /* An unidentified floor is stored under the origin that could not identify it, whoever
+     that is. Ours is a floor under our own total; a foreign one is held and reported and
+     never counted. Either way it stays on the coordinate the export gave it — there is
+     no identity to relocate it by. */
   for (const [day, byAgent] of Object.entries(inc.days ?? {})) {
     for (const [agent, models] of Object.entries(byAgent ?? {})) {
       for (const [model, cell] of Object.entries(models ?? {})) {
-        for (const [digest, b] of Object.entries(cell?.s ?? {})) {
-          if (!isBucket(b)) continue;
-          counts.incoming += 1;
-
-          const at = home.get(digest) ?? { day, agent, model };
-          if (at.day !== day || at.agent !== agent || at.model !== model) relocated += 1;
-
-          const outcome = maxInto(cellAt(at.day, at.agent, at.model).s, digest, b);
-          counts[outcome] += 1;
-          home.set(digest, at);
-        }
-
-        /* An unidentified floor is stored under the origin that could not identify it, whoever
-           that is. Ours is a floor under our own total; a foreign one is held and reported and
-           never counted. Either way it stays on the coordinate the export gave it — there is
-           no identity to relocate it by. */
         for (const [origin, b] of Object.entries(cell?.u ?? {})) {
-          if (!isBucket(b)) continue;
+          if (!isBucket(b) || !safeKey(origin)) continue;
           const target = cellAt(day, agent, model);
+          if (!target) continue;
           maxInto((target.u ??= {}), origin, b);
         }
       }

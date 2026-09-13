@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import {
   ACCOUNTING_VERSION,
+  adopt,
   bank,
   buildExport,
   commitLedger,
@@ -650,4 +651,164 @@ test("a cell the adapter could only half identify keeps every token", async () =
     // drained
   }
   assert.equal(tokensOf(led), 150, "a second scan of the same logs changes nothing");
+});
+
+/* ---------------------------------------------------------------- *
+ * Hostile input: an import file is untrusted even when the user typed its path
+ * ---------------------------------------------------------------- */
+
+/**
+ * A ledger tree is walked and assigned into with `??=`. A key of `__proto__` turns that into a
+ * write to `Object.prototype`, which poisons every object in the process rather than just this
+ * ledger. This was reachable from a crafted export before the keys were refused, so each
+ * position that takes a key from the file has a case here.
+ *
+ * Built from raw JSON text on purpose: `{ "__proto__": x }` written as an object *literal*
+ * sets the prototype instead of creating an own property, so a literal-based test would pass
+ * while the real attack — a file going through `JSON.parse` — still worked.
+ */
+const rawExport = (daysJson, origin = "evil") =>
+  JSON.parse(
+    `{"format":"tokenchit-ledger-export","version":1,"accounting":2,` +
+      `"exportedAt":"2026-09-13T00:00:00.000Z","origin":"${origin}","tz":"UTC",` +
+      `"since":"2026-01-01","coverage":{"first":null,"last":null,"days":0,"tokens":0},` +
+      `"days":${daysJson}}`,
+  );
+
+test("an export cannot smuggle a prototype-poisoning key through any position", () => {
+  const attacks = {
+    day: '{"__proto__":{"claude-code":{"opus":{"s":{"aaaaaa":[1,0,0,0]}}}}}',
+    agent: '{"2026-08-01":{"__proto__":{"opus":{"s":{"aaaaaa":[1,0,0,0]}}}}}',
+    model: '{"2026-08-01":{"claude-code":{"__proto__":{"s":{"aaaaaa":[1,0,0,0]}}}}}',
+    digest: '{"2026-08-01":{"claude-code":{"opus":{"s":{"__proto__":[1,0,0,0]}}}}}',
+    origin: '{"2026-08-01":{"claude-code":{"opus":{"u":{"__proto__":[1,0,0,0]}}}}}',
+    constructorAgent: '{"2026-08-01":{"constructor":{"opus":{"s":{"aaaaaa":[1,0,0,0]}}}}}',
+    prototypeModel: '{"2026-08-01":{"claude-code":{"prototype":{"s":{"aaaaaa":[1,0,0,0]}}}}}',
+  };
+
+  for (const [where, daysJson] of Object.entries(attacks)) {
+    const checked = validateExport(rawExport(daysJson));
+    assert.equal(checked.ok, false, `a poisoned ${where} key was accepted`);
+  }
+
+  // The envelope's own origin becomes a key in every cell it touches, so it is held to the
+  // same rule rather than merely to "is a printable string".
+  assert.equal(validateExport(rawExport('{"2026-08-01":{"claude-code":{"opus":{"s":{"aaaaaa":[1,0,0,0]}}}}}', "__proto__")).ok, false);
+
+  assert.equal({}.pwned, undefined, "Object.prototype was modified");
+  assert.deepEqual(Object.keys({}), [], "a bare object gained keys");
+});
+
+test("banking refuses a poisoned key even if validation is bypassed", () => {
+  /* Belt behind the brace. `bank` is the only function that creates the nested objects, and it
+     is reached from imports, from scans and from a ledger read off disk — guarding the callers
+     one at a time would be a weaker guarantee than guarding the one place that writes. */
+  const before = Object.getOwnPropertyNames(Object.prototype).length;
+  const led = ledgerFrom("me");
+
+  bank(led, "2026-08-01", "__proto__", "opus", "aaaaaa", [1, 0, 0, 0]);
+  bank(led, "2026-08-01", "claude-code", "__proto__", "aaaaaa", [1, 0, 0, 0]);
+  bank(led, "__proto__", "claude-code", "opus", "aaaaaa", [1, 0, 0, 0]);
+  bank(led, "2026-08-01", "claude-code", "opus", "__proto__", [1, 0, 0, 0]);
+  bank(led, "2026-08-01", "claude-code", "opus", "constructor", [1, 0, 0, 0]);
+
+  assert.equal(Object.getOwnPropertyNames(Object.prototype).length, before);
+  assert.deepEqual(led.days, {}, "nothing poisoned was banked");
+  assert.equal(tokensOf(led), 0);
+
+  // A normal key beside them still works, so the guard is not just refusing everything.
+  bank(led, "2026-08-01", "claude-code", "opus", "aaaaaa", [5, 0, 0, 0]);
+  assert.equal(tokensOf(led), 5);
+});
+
+test("a hand-edited ledger file cannot poison the process either", () => {
+  /* `readLedger` parses a file the user can edit, and everything downstream assigns into the
+     tree it returns. It is sanitised on the way in rather than trusted. */
+  const before = Object.getOwnPropertyNames(Object.prototype).length;
+
+  const poisoned = JSON.parse(
+    `{"version":2,"since":"2026-01-01","updatedAt":"2026-01-01T00:00:00.000Z",` +
+      `"origin":"o","tz":"UTC","days":{"2026-08-01":{"__proto__":{"opus":{"s":{"aaaaaa":[1,0,0,0]}}},` +
+      `"claude-code":{"opus":{"s":{"bbbbbb":[7,0,0,0]}}}}}}`,
+  );
+
+  const led = adopt(poisoned);
+  assert.equal(Object.getOwnPropertyNames(Object.prototype).length, before);
+  assert.deepEqual(Object.keys(led.days["2026-08-01"] ?? {}), ["claude-code"], "the poisoned agent is dropped");
+  assert.equal(tokensOf(led), 7, "and the legitimate entry beside it survives");
+});
+
+/* ---------------------------------------------------------------- *
+ * A session is not a cell
+ * ---------------------------------------------------------------- */
+
+test("a session that crosses midnight survives an import intact", () => {
+  /*
+   * The defect this guards, found by fuzzing merges against a ground truth.
+   *
+   * A session digest was treated as living at exactly one `(day, agent, model)`, so an import
+   * kept the first cell it saw for a digest and silently dropped every later one. A session
+   * running past midnight occupies two days legitimately, and importing such a ledger lost the
+   * second day's tokens outright — quietly, with a plausible total.
+   */
+  const mine = ledgerFrom("me");
+
+  const theirs = ledgerFrom("them");
+  put(theirs, "2026-08-01", "late-night", 1000); // before midnight
+  put(theirs, "2026-08-02", "late-night", 400); // and after it
+
+  const { ledger, preview } = mergeExport(mine, exportOf(theirs));
+
+  assert.equal(tokensOf(ledger), 1400, "both halves of the session arrive");
+  assert.equal(ledgerSummary(ledger).days, 2, "on both days it actually touched");
+  assert.equal(preview.sources.added, 1, "counted as one session, not two");
+});
+
+test("a session that switches model mid-way survives an import intact", () => {
+  const mine = ledgerFrom("me");
+  const theirs = ledgerFrom("them");
+  put(theirs, "2026-08-01", "switched", 900, "claude-code", "opus");
+  put(theirs, "2026-08-01", "switched", 300, "claude-code", "sonnet");
+
+  const { ledger } = mergeExport(mine, exportOf(theirs));
+  assert.equal(tokensOf(ledger), 1200, "both models' share of one session arrive");
+});
+
+test("a session is worth the most any one machine saw, with that machine's breakdown", () => {
+  /*
+   * Two machines, one session, split differently. Mixing one machine's Monday figure with the
+   * other's Tuesday figure would bank a distribution neither ever observed, so the fuller
+   * reading's breakdown travels with its total.
+   */
+  const mine = ledgerFrom("me");
+  put(mine, "2026-08-01", "s", 500); // we saw only part of it, all on one day
+
+  const theirs = ledgerFrom("them");
+  put(theirs, "2026-08-01", "s", 700); // they saw more, and saw it span midnight
+  put(theirs, "2026-08-02", "s", 300);
+
+  const { ledger, preview } = mergeExport(mine, exportOf(theirs));
+
+  assert.equal(tokensOf(ledger), 1000, "1000, not 500 + 1000 and not 700");
+  assert.equal(ledgerSummary(ledger).days, 2, "their breakdown came with their total");
+  assert.equal(preview.sources.raised, 1);
+
+  // The reverse import must not lower it, so order cannot change the answer.
+  const back = mergeExport(ledger, exportOf(mine));
+  assert.equal(tokensOf(back.ledger), 1000);
+  assert.equal(back.preview.changed, false);
+});
+
+test("a thinner split does not leave an orphaned cell behind", () => {
+  const mine = ledgerFrom("me");
+  put(mine, "2026-08-01", "s", 100);
+  put(mine, "2026-08-05", "s", 100); // our split says two days
+
+  const theirs = ledgerFrom("them");
+  put(theirs, "2026-08-01", "s", 900); // theirs is fuller and says one
+
+  const { ledger } = mergeExport(mine, exportOf(theirs));
+  assert.equal(tokensOf(ledger), 900, "our weaker split is replaced, not added to");
+  assert.equal(ledgerSummary(ledger).days, 1, "and the day it vacated is gone, not an empty husk");
+  assert.equal(ledger.days["2026-08-05"], undefined);
 });

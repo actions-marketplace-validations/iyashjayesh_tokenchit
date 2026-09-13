@@ -604,3 +604,96 @@ un-greppable. All occurrences are now escapes.
   `--export` first, which is a file no version of this tool will overwrite.
 - No cloud sync, no automatic remote collection, no background upload. `export` writes a file the
   user names; `import` reads one the user names. Nothing else moves.
+
+## QA pass — what a deliberate attempt to break it found
+
+Run after all five stages were committed. Four defects, two of them serious. Each is fixed and
+each has a regression test, because a fix without one is a fix with a shelf life.
+
+### 1. Prototype pollution from a crafted import file (security)
+
+`ledger --import` walks an untrusted tree and assigns into nested objects with `??=`. An agent
+or model key of `__proto__` turned that assignment into a write to `Object.prototype`, poisoning
+every object in the process rather than only the ledger. Day keys and session digests were
+already saved by their format regexes; agent, model and origin keys were not.
+
+Demonstrated with a raw JSON payload, which is the only way to demonstrate it: `{ "__proto__": x }`
+written as an object *literal* sets the prototype instead of creating an own property, so a
+literal-based test passes while the real attack still works.
+
+Fixed in three places rather than one, because the tree arrives by three routes:
+
+- **validation** refuses `__proto__`, `constructor` and `prototype` at every position that takes
+  a key from the file;
+- **`bank()`** refuses them too — it is the only function that creates the nested objects, and it
+  is reached from imports, from scans *and* from a ledger read off disk;
+- **`adopt()`** strips them from a v2 tree on read, so a hand-edited `ledger.json` is no vector
+  either.
+
+### 2. A session is not a cell (correctness, silent data loss)
+
+Found by fuzzing multi-machine merges against an independently computed ground truth: 343 of 400
+trials disagreed.
+
+The merge treated a session digest as living at exactly one `(day, agent, model)`, keeping the
+first cell it saw and dropping the rest. But a session legitimately occupies more than one cell
+— it runs past midnight, or switches model mid-way. Importing a ledger containing any such
+session lost the later cells outright, quietly, leaving a plausible total.
+
+The merge now groups by session: a session is worth the **largest total any one machine
+attributes to it**, and the day/model breakdown comes from that same machine. Both halves are
+needed. Taking the max across machines is the "max within one source" rule applied at the level
+where a source actually lives; taking the breakdown from the winning machine keeps the split
+coherent, since mixing one machine's Monday figure with another's Tuesday figure would bank a
+distribution neither ever observed.
+
+Merging cell-by-cell *without* a home coordinate would have double-counted the timezone case
+instead. Grouping by session is the only rule that is right for both.
+
+Re-fuzzed after the fix: 600 trials, sessions deliberately spanning multiple days and models —
+zero order-dependent results, zero disagreements with ground truth, zero non-idempotent
+re-imports, zero cases losing pre-existing history.
+
+### 3. The backup was world-readable (privacy)
+
+`copyFile` creates its destination under the process umask, so `--apply` wrote a 0644 backup of
+a deliberately 0600 ledger: the same record of when somebody works and how hard, republished to
+every account on a shared box. Now written through a temporary file created at 0600 and renamed
+into place, so the mode is right from the first byte.
+
+This one is the clearest argument for the test file it produced. There was **no CLI-level
+coverage of export/import at all** — the merge arithmetic was well tested in core, and
+everything the CLI wrapped around it was not. `packages/cli/test/portable.test.js` now covers
+permissions, the backup, preview-versus-apply, `--json`, and the promise that every refusal
+leaves the ledger byte-identical.
+
+### 4. `recap --week --month` picked one silently
+
+`--week --year` refused; `--week --month` quietly reported the week. Now refused too.
+
+### What the QA confirmed rather than broke
+
+- **Period maths**: 140,256 boundary invariants across four years and eight timezones — including
+  half-hour DST (Lord Howe), +12:45 (Chatham), southern-hemisphere DST (Santiago) and +14
+  (Kiritimati). Zero failures. Weeks are always Mon–Sun and fully elapsed; months always span a
+  real calendar month; periods are contiguous with no gap or overlap.
+- **Gemini accounting**: 15 adversarial records plus 200,000 fuzzed ones — zero reconciliation
+  failures. Re-verified against the real machine: 46 records, **1,606,888 tokens, matching
+  Gemini's own reported totals exactly**, deterministic across scans, all 46 now carrying a
+  session identity.
+- **`doctor` is read-only**: the config directory is byte-identical after repeated runs, the
+  ledger's mtime never moves, and no lock, temp or backup file is left behind.
+- **The lock is real**: 12 concurrent OS processes writing 25 sessions each produced all 300
+  with zero lost updates. A stale lock is taken over after 60s; a live one blocks and then
+  refuses with a diagnostic after 10s.
+- **Corrupt input degrades, never crashes**: truncated JSON, non-JSON, empty, `null`, an array,
+  wrong-shaped buckets and a future version all read back as an empty ledger.
+- **Privacy of a real export**: no absolute paths, no tilde paths, no file extensions, no emails,
+  no URLs, no username. The only UUID in the file is the ledger's own random origin label, and
+  none of the machine's real session ids appear — all six sampled are present only as digests.
+- **Cross-command agreement**: `sync`, `recap`, `doctor` and `publish` all report
+  15,130,848,662 tokens across 59 days. No drift.
+- **PNG**: every preset and scale produces a structurally valid PNG with correct aspect ratios
+  and every chunk CRC verified; non-numeric scales exit 1; no PNG is written without `--png`.
+- **Rebuild under v2**: a scoped `--rebuild` clears the target agent's identified sessions *and*
+  its unidentified floor, and leaves every other agent untouched.

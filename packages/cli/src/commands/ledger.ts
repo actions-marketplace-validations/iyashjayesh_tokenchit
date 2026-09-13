@@ -1,5 +1,4 @@
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { rm } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 
 import { formatTokens, localDay } from "@tokenchit/core";
@@ -285,7 +284,7 @@ async function importLedger(from: string, apply: boolean, json: boolean): Promis
     let backup: string | null = null;
     if (await stat(path).then(() => true).catch(() => false)) {
       backup = backupPath(path);
-      await copyFile(path, backup);
+      await copyLedgerFile(path, backup);
     }
     await writeLedger(merged, path);
     return { preview, wrote: true, backup };
@@ -391,4 +390,20 @@ function warnLines(text: string): string {
   }
   if (line) lines.push(line);
   return lines.map((l, i) => (i === 0 ? `  ${yellow("!")} ${l}` : `    ${dim(l)}`)).join("\n");
+}
+
+/**
+ * Copy the ledger aside, at the ledger's own permissions.
+ *
+ * `copyFile` creates the destination under the process umask, so the backup came out 0644
+ * while the file it copies is deliberately 0600 — the same record of when somebody works and
+ * how hard, republished to every account on a shared box. Written through a temporary file
+ * created at 0600 and renamed into place, so the mode is right from the first byte and an
+ * existing backup is replaced atomically rather than truncated and refilled.
+ */
+async function copyLedgerFile(from: string, to: string): Promise<void> {
+  const body = await readFile(from);
+  const tmp = `${to}.${process.pid}.tmp`;
+  await writeFile(tmp, body, { mode: 0o600 });
+  await rename(tmp, to);
 }
