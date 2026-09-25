@@ -161,7 +161,7 @@ test("a written ledger reads back as itself", async () => {
   const path = join(dir, "ledger.json");
 
   const led = emptyLedger();
-  bank(led, "2026-08-03", "claude-code", "claude-opus-5", [1, 2, 3, 4]);
+  bank(led, "2026-08-03", "claude-code", "claude-opus-5", "aaaaaaaaaaaa", [1, 2, 3, 4]);
   await writeLedger(led, path);
 
   const back = await readLedger(path);
@@ -181,12 +181,12 @@ test("a scoped rebuild clears only the agents it will re-derive", async () => {
    * machine and re-derived none of them. That is the one piece of state here that cannot be read
    * back off disk, which is the entire reason the file exists.
    */
-  const { withoutAgents, ledgerSummary, bank } = await import("@tokenchit/core/adapters");
+  const { withoutAgents, ledgerSummary, bank, emptyLedger } = await import("@tokenchit/core/adapters");
 
-  const ledger = { version: 1, since: "2026-01-01", updatedAt: "2026-01-01", days: {} };
-  bank(ledger, "2026-08-01", "claude-code", "opus", [10, 10, 0, 0]);
-  bank(ledger, "2026-08-01", "codex", "gpt", [1, 1, 0, 0]);
-  bank(ledger, "2026-08-02", "opencode", "local", [2, 2, 0, 0]);
+  const ledger = emptyLedger();
+  bank(ledger, "2026-08-01", "claude-code", "opus", "s1", [10, 10, 0, 0]);
+  bank(ledger, "2026-08-01", "codex", "gpt", "s2", [1, 1, 0, 0]);
+  bank(ledger, "2026-08-02", "opencode", "local", "s3", [2, 2, 0, 0]);
 
   assert.equal(ledgerSummary(ledger).tokens, 26, "40 banked across three agents");
 
@@ -204,8 +204,8 @@ test("a scoped rebuild clears only the agents it will re-derive", async () => {
 
   // A day left with no agents at all is dropped, not kept as an empty husk that would still
   // count toward `days` and report history that is no longer there.
-  const onlyClaude = { version: 1, since: "x", updatedAt: "x", days: {} };
-  bank(onlyClaude, "2026-08-01", "claude-code", "opus", [5, 5, 0, 0]);
+  const onlyClaude = emptyLedger();
+  bank(onlyClaude, "2026-08-01", "claude-code", "opus", "s4", [5, 5, 0, 0]);
   assert.equal(ledgerSummary(withoutAgents(onlyClaude, ["claude-code"])).days, 0);
 
   // An unscoped rebuild genuinely is the whole bank, and must still clear all of it.

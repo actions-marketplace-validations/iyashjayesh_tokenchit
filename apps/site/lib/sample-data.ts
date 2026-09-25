@@ -33,13 +33,16 @@ export const PRIVACY_TESTS = [
   { name: "paths.absent",      desc: "no filesystem path is collected at all — not hashed, not truncated, absent",   ms: "35ms" },
   { name: "dryrun.exact",      desc: "--dry-run prints the byte-identical body that a real publish puts on the wire", ms: "90ms" },
   { name: "net.isolated",      desc: "no source file outside src/net.ts can open a socket",                          ms: "7ms" },
-  { name: "payload.noContent.everyAdapter", desc: "the same guarantee proved for Codex and OpenCode, not Claude Code alone", ms: "51ms" },
+  { name: "payload.noContent.everyAdapter", desc: "the same guarantee proved for every adapter, not Claude Code alone", ms: "51ms" },
 ];
 
 export const AGENT_BREAKDOWN = [
-  { name: "claude-code", pct: "58%", w: "58%", color: "#C6FF3D", tokens: "2.46B", cost: "$742.10" },
-  { name: "codex",       pct: "21%", w: "21%", color: "#FF5C3D", tokens: "890M",  cost: "$268.40" },
-  { name: "opencode",    pct: "21%", w: "21%", color: "#8A8A82", tokens: "902M",  cost: "—" },
+  { name: "claude-code", pct: "52%", w: "52%", color: "#C6FF3D", tokens: "2.46B", cost: "$742.10" },
+  { name: "codex",       pct: "19%", w: "19%", color: "#FF5C3D", tokens: "890M",  cost: "$268.40" },
+  { name: "opencode",    pct: "19%", w: "19%", color: "#8A8A82", tokens: "902M",  cost: "—" },
+  /* Gemini's models have no public per-token price, so it shows tokens and no cost — the same
+     way OpenCode's self-hosted models do, and the reason the card reports a priced share. */
+  { name: "gemini",      pct: "10%", w: "10%", color: "#174EA6", tokens: "471M",  cost: "—" },
 ];
 
 /**

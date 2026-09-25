@@ -1,5 +1,7 @@
 import { buildRecap, formatTokens, localDay, type AgentId, type Stats } from "@tokenchit/core";
 
+import { unsupported as UNSUPPORTED_PROBES } from "@tokenchit/core/adapters";
+
 import { ALL_AGENTS, detect, read } from "./stats.js";
 
 export type Tool = {
@@ -193,7 +195,8 @@ export const tools: Tool[] = [
   {
     name: "get_recap",
     description:
-      "Year in review for one calendar year: headline tiles, per-agent and per-model " +
+      "Year in review for one calendar year: headline tiles, monthly breakdown, biggest day, " +
+      "activity badges, a comparison against the year before, per-agent and per-model " +
       "breakdown, the busiest hour range, and activity aggregated by weekday and hour (not " +
       "by date). The same figures `tokenchit recap` renders.",
     inputSchema: {
@@ -212,8 +215,8 @@ export const tools: Tool[] = [
     async run(args) {
       const now = new Date();
       const year = asYear(args.year, now);
-      const { stats } = await read(asAgents(args.agents), year);
-      const recap = buildRecap(stats, { year });
+      const { stats, historyFrom } = await read(asAgents(args.agents), year);
+      const recap = buildRecap(stats, { year, historyFrom });
 
       return {
         year: recap.year,
@@ -221,6 +224,18 @@ export const tools: Tool[] = [
         agents: recap.agents,
         models: recap.models,
         peakHours: recap.peak,
+        /* How much of the total actually had an observed clock behind it. A model quoting
+           "peak hours" without this would be repeating a figure partly derived from timestamps
+           this tool synthesised. */
+        peakClockCoverage: Number(recap.peakCoverage.toFixed(4)),
+        months: recap.months.map((m) => ({ month: m.month, tokens: m.tokens })),
+        biggestDay: recap.biggestDay,
+        /* Deterministic activity patterns, with the rule that earned each one. The detail is
+           included so a model can say *why* rather than just asserting the label. */
+        badges: recap.badges.map((b) => ({ id: b.id, label: b.label, detail: b.detail })),
+        /* Null `deltaPct` is not zero: it means the previous year cannot support a percentage,
+           and `reason` says which of the several causes it was. */
+        previousYear: recap.previousYear,
         activeDays: recap.activeDays,
         tokens: recap.tokens,
         /*
@@ -257,10 +272,11 @@ export const tools: Tool[] = [
         supported: found.filter((a) => a.state === "ready").map((a) => a.agent),
         // Named rather than omitted: "Copilot is missing" and "Copilot cannot be supported"
         // are different answers, and only one of them is a bug report.
-        unsupported: [
-          { agent: "copilot-cli", reason: "records only a live context gauge, not token totals" },
-          { agent: "gemini-cli", reason: "transcripts carry no token counts" },
-        ],
+        /* Sourced from the probes rather than restated here. This was a hardcoded copy and it
+           had already drifted: it still called Gemini uncountable after Gemini became a real
+           adapter, so the one tool whose job is to explain what cannot be counted was the last
+           thing telling the truth about it. */
+        unsupported: UNSUPPORTED_PROBES.map((p) => ({ agent: p.name, reason: p.reason })),
       };
     },
   },

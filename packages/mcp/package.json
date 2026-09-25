@@ -1,6 +1,6 @@
 {
   "name": "@tokenchit/mcp",
-  "version": "0.8.0",
+  "version": "0.10.0",
   "description": "MCP server exposing your local AI coding agent usage. Reads logs on your machine and makes no network request.",
   "keywords": [
     "mcp",
@@ -8,6 +8,7 @@
     "claude-code",
     "codex",
     "opencode",
+    "gemini",
     "tokens",
     "usage",
     "ai-agents"

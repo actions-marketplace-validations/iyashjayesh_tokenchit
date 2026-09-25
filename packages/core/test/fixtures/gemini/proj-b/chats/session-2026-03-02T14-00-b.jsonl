@@ -1,0 +1,6 @@
+{"id": "m3", "timestamp": "2026-03-02T14:00:00.000Z", "type": "gemini", "model": "gemini-2.5-flash", "tokens": {"input": 500, "output": 40, "cached": 100, "thoughts": 10, "tool": 25, "total": 575}}
+{"id": "m4", "timestamp": "2026-03-02T15:00:00.000Z", "type": "gemini", "model": "gemini-2.5-pro", "tokens": {"input": 900, "output": 100, "cached": 0, "thoughts": 0, "tool": 0, "total": 12345}}
+{"id": "m5", "timestamp": "2026-03-02T16:00:00.000Z", "type": "gemini", "model": "gemini-2.5-pro", "tokens": {"input": 100, "output": 10, "cached": 500, "thoughts": 0, "tool": 0}}
+{"id": "m6", "type": "gemini", "model": "gemini-2.5-pro", "tokens": {"input": 100, "output": 10, "cached": 0, "thoughts": 0, "tool": 0, "total": 110}}
+{"id": "m7", "timestamp": "2026-03-02T17:00:00.000Z", "type": "gemini", "model": "gemini-2.5-pro", "tokens": {"input": 200, "output": 20, "cached": 50, "thoughts": 5, "tool": 0}}
+{"id":"m8","timestamp":"2026-03-02T18:00:00.000Z","tokens":{"input":10,

@@ -137,7 +137,7 @@ export default async function ProfilePage({ params, searchParams }: Props) {
    * as a separate parameter, and folding it into the text as well prints it twice.
    */
   const inviteBody = [
-    `Try tokenchit: it reads your Claude Code, Codex and OpenCode logs locally and renders a usage card you commit to your README.`,
+    `Try tokenchit: it reads your Claude Code, Codex, Gemini CLI and OpenCode logs locally and renders a usage card you commit to your README.`,
     ``,
     PRIMARY_COMMAND,
   ].join("\n");

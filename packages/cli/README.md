@@ -2,7 +2,7 @@
 
 Turn your local AI coding agent logs into an embeddable stat card for your GitHub README.
 
-Reads the transcripts **Claude Code**, **Codex** and **OpenCode** already write to your disk,
+Reads the transcripts **Claude Code**, **Codex**, **Gemini CLI** and **OpenCode** already write to your disk,
 totals them, and renders an SVG you commit to your own repo. No account, no upload, no server
 — the card is a file.
 
@@ -19,13 +19,16 @@ npx @tokenchit/cli sync     # render tokenchit.svg
 
 | Agent | Source |
 | --- | --- |
-| Claude Code | `~/.claude/projects/**/*.jsonl` |
+| Claude Code | `~/.claude*/projects/**/*.jsonl` — every profile directory, not just the default |
 | Codex | `~/.codex/sessions/**/rollout-*.jsonl` |
 | OpenCode | `~/.local/share/opencode/opencode.db` |
+| Gemini CLI | `~/.gemini/tmp/*/chats/*.jsonl` |
 
-**Copilot CLI and Gemini CLI are detected but cannot be counted.** Copilot records only a
-live context-window gauge, never a cumulative total; Gemini's chat transcripts carry no token
-counts at all. `init` says so out loud rather than silently omitting them.
+Gemini records token counts only in recent versions. An installation whose recordings all
+predate that is reported as detected-but-uncountable rather than as a zero.
+
+**Copilot CLI is detected but cannot be counted.** It records only a live context-window
+gauge, never a cumulative total. `init` says so out loud rather than silently omitting it.
 
 Nothing but token counts, model ids and timestamps is read. No prompts, no completions, no
 file contents, and no paths — not hashed, not truncated, absent.
@@ -47,9 +50,17 @@ tokenchit recap           year in review: heatmap, models, totals
   --out <path>             default: tokenchit-recap.svg
   --year <yyyy>            the year to report on (default: this year)
 
-tokenchit ledger          show the local history bank, or rebuild it
+tokenchit ledger          show the local history bank, export it, or merge one in
+  --export <file>          a portable copy: usage only, no credentials or paths
+  --import <file>          preview a merge; nothing is written without --apply
+  --apply                  commit the previewed import, keeping a backup
   --rebuild                re-derive from the logs still on disk
   --yes                    required by --rebuild, which cannot be undone
+
+> **Upgrading migrates the ledger, and going back a version is not safe.** An older tokenchit
+> reads the new format as unrecognised and rewrites it from whatever logs are still on disk.
+> Upgrading is lossless and the CLI says so once. If you might roll back, run
+> `tokenchit ledger --export` first.
 
 tokenchit hook install    refresh and stage the card on every commit
 tokenchit hook uninstall

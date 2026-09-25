@@ -44,6 +44,13 @@ export const AGENT_MARKS: Record<string, AgentMark> = {
     light: "#D97757",
     dark: "#D97757",
   },
+  gemini: {
+    /* A four-pointed spark, drawn as two mirrored quadratic arcs meeting at the axes. Kept
+       to the same 24-unit box as the others so it scales identically on the card. */
+    path: "M12 0c.6 6.2 5.2 10.8 11.4 11.4v1.2C17.2 13.2 12.6 17.8 12 24c-.6-6.2-5.2-10.8-11.4-11.4v-1.2C6.8 10.8 11.4 6.2 12 0z",
+    light: "#174EA6",
+    dark: "#8AB4F8",
+  },
   opencode: {
     path: "M22 24H2V0h20zM17 4.8H7v14.4h10z",
     // Black on white, white on black: the mark is a square outline, and either way round it
@@ -80,6 +87,12 @@ export const AGENT_COLOURS: Record<string, { light: string; dark: string }> = {
   "claude-code": { light: "#D97757", dark: "#D97757" },
   codex: { light: "#101010", dark: "#FFFFFF" },
   opencode: { light: "#5C7A1E", dark: "#C6FF3D" },
+  /* Chosen the same way. On the light side #174EA6 sits at 0.084, in the gap between codex's
+     0.005 and opencode's 0.163 — the obvious Google blues all failed: #4285F4 lands at 0.245,
+     0.007 from the neutral, and #1A73E8 at 0.183 is 0.020 from opencode, so either would have
+     merged with a neighbour in greyscale. On the dark side #8AB4F8 sits at 0.448, 0.162 clear
+     of its nearest neighbour. */
+  gemini: { light: "#174EA6", dark: "#8AB4F8" },
 };
 
 /** Neutral for anything not yet known, matching GENERIC's mark. */

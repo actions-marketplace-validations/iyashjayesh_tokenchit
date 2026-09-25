@@ -100,9 +100,15 @@ test("detect_agents reads the fixture and names what it cannot support", async (
   const { messages } = await talk([call(1, "detect_agents")]);
   const out = payload(find(messages, 1));
 
-  assert.deepEqual(out.agents.map((a) => a.agent).sort(), ["claude-code", "codex", "opencode"]);
+  assert.deepEqual(
+    out.agents.map((a) => a.agent).sort(),
+    ["claude-code", "codex", "gemini", "opencode"],
+    "gemini became a real adapter once its recordings were shown to carry counts",
+  );
   for (const a of out.agents) assert.ok(a.source, `${a.agent} says where it reads from`);
-  assert.deepEqual(out.unsupported.map((u) => u.agent), ["copilot-cli", "gemini-cli"]);
+  /* Only Copilot remains uncountable. The list is sourced from the probes rather than
+     restated in the MCP tool, so it cannot drift away from what the adapters actually do. */
+  assert.deepEqual(out.unsupported.map((u) => u.agent), ["Copilot CLI"]);
   for (const u of out.unsupported) assert.ok(u.reason, `${u.agent} says why`);
 });
 

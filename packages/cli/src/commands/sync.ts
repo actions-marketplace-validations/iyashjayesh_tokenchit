@@ -11,6 +11,7 @@ import {
 } from "@tokenchit/core";
 
 import { flag, has, oneOf } from "../args.js";
+import { PRESETS } from "../png.js";
 import { readAuth } from "../auth.js";
 import { warnIfCoerced } from "./init.js";
 import { CONFIG_FILE, DEFAULT_CONFIG, readConfig } from "../config.js";
@@ -51,13 +52,27 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   const out = flag(argv, "--out") ?? config.output;
   const json = has(argv, "--json");
   const dryRun = has(argv, "--dry-run");
+  /* PNG is opt-in and additive. The rasteriser is an optional dependency loaded only on this
+     path, so a machine that cannot build a native module still has a working `sync`. */
+  const wantPng = has(argv, "--png");
+  /* `--json` prints figures instead of writing files, so it has nothing to rasterise. Ignoring
+     `--png` silently there left the user with no PNG, no message and no reason to look. */
+  if (wantPng && json) {
+    throw new Error("--json prints figures instead of writing a card; there is nothing to rasterise. Drop one.");
+  }
+  const preset = oneOf(flag(argv, "--preset"), PRESETS, "preset") ?? "card";
+  const scaleFlag = flag(argv, "--scale");
+  const scale = scaleFlag ? Number(scaleFlag) : 2;
+  if (scaleFlag && !Number.isFinite(scale)) {
+    throw new Error(`--scale must be a number (got "${scaleFlag}")`);
+  }
 
   // Thousands of transcripts take a few seconds to walk. Silence over that long reads as a
   // hang, and the spinner writes to stderr so `--json` stays pipeable.
   const reading = spin("reading local agent logs…");
   /* Named and counted, because a scan that reports nothing looks the same as one that has
      hung. On a large corpus this walks thousands of files over several seconds. */
-  const { stats, recovered } = await scan(config.agents, {
+  const { stats, recovered, ledger } = await scan(config.agents, {
     // A dry run promises to write nothing, and the ledger is a file like any other.
     write: !dryRun,
     onProgress: ({ agent, events }) =>
@@ -151,6 +166,27 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   /* Said once, and only when it did something. On a fresh install the bank is empty and this
      is silent; it starts speaking the first time retention takes a day it had already seen,
      which is the moment someone would otherwise notice their total quietly shrinking. */
+  /*
+   * Said once, at the moment the file changes shape.
+   *
+   * Upgrading is lossless. Going *back* a version is not, and no amount of care in this code
+   * can change what an older build does: it reads a v2 ledger as unrecognised, falls back to an
+   * empty bank and rewrites it from whatever logs are still on disk. That is the one piece of
+   * state here that cannot be re-derived, so the way out is named rather than merely implied.
+   */
+  if (ledger.migratedFrom === 1) {
+    note(
+      `ledger upgraded to the v2 format ${dim("— per-session, so history can move between machines")}`,
+    );
+    say(
+      dim(
+        "    An older tokenchit cannot read it and would overwrite it. " +
+          "Keep a copy first: tokenchit ledger --export <file>",
+      ),
+    );
+    say();
+  }
+
   if (recovered.days > 0) {
     note(
       `ledger restored ${recovered.days} ${recovered.days === 1 ? "day" : "days"} ` +
@@ -179,6 +215,11 @@ export async function sync(argv: string[], chained = false): Promise<number> {
 
   if (dryRun) {
     say(dim(`  would write ${relative(process.cwd(), target)} (${svg.length} bytes)`));
+    /* Named rather than omitted. A dry run that lists one of the two files it was asked for
+       reads as though the other was rejected. */
+    if (wantPng) {
+      say(dim(`  would write ${relative(process.cwd(), pngPathFor(target))} (${preset}, ${scale}x)`));
+    }
     return 0;
   }
 
@@ -207,11 +248,32 @@ export async function sync(argv: string[], chained = false): Promise<number> {
   const rel = relative(process.cwd(), target);
   say(`${green("✓")} wrote ${bold(rel)} ${dim(`(${svg.length} bytes)`)}`);
 
+  /*
+   * The PNG is written beside the SVG, never instead of it.
+   *
+   * The SVG is the artifact this tool argues for — a committed file GitHub serves directly. A
+   * raster copy exists for the places that will not take one, so asking for a PNG adds an
+   * output rather than replacing the one that belongs in the README.
+   */
+  let pngRel: string | null = null;
+  if (wantPng) {
+    const { toPng } = await import("../png.js");
+    const pngTarget = pngPathFor(target);
+    const { png, width, height } = await toPng(svg, { scale, preset });
+    await writeFile(pngTarget, png);
+    pngRel = relative(process.cwd(), pngTarget);
+    say(`${green("✓")} wrote ${bold(pngRel)} ${dim(`(${width}×${height}, ${png.length} bytes)`)}`);
+  }
+
   say();
   say(`  ${grey("embed")}     ![tokenchit — @${handle} AI coding agent usage](./${asUrlPath(rel)})`);
   // Committing on the user's behalf is not ours to decide — a tool that reads your logs
   // should not also decide what lands in your history on its first run.
   say(`  ${grey("commit")}    git add ${rel} && git commit -m "chore: update tokenchit"`);
+  if (pngRel) {
+    // Named separately so nobody embeds the raster copy in a README by accident.
+    say(`  ${grey("png")}       ${pngRel} ${dim("— for places that will not take an SVG")}`);
+  }
   if (!chained) {
     say(`  ${grey("share")}     ${bold("tokenchit publish")} ${dim("— put this on the board")}`);
     // Offered where the manual step is being shown, which is the moment it becomes relevant.
@@ -221,3 +283,6 @@ export async function sync(argv: string[], chained = false): Promise<number> {
 
   return 0;
 }
+
+/** The PNG that sits beside a given SVG target. One definition, so the dry run cannot drift. */
+const pngPathFor = (svgTarget: string): string => `${svgTarget.replace(/\.svg$/i, "")}.png`;

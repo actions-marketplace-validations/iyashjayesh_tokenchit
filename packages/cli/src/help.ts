@@ -37,7 +37,8 @@ export const COMMANDS: Record<string, Command> = {
     summary: "detect agents, write .tokenchit.json",
     flags: [["--handle <name>", "GitHub handle (default: guessed from origin remote)"]],
     detail:
-      "Looks for Claude Code, Codex and OpenCode logs and records which of them to read.\n" +
+      "Looks for Claude Code, Codex, Gemini CLI and OpenCode logs and records which of them to\n" +
+      "read.\n" +
       "The file it writes is meant to be committed; it never contains a credential.",
   },
   sync: {
@@ -47,6 +48,9 @@ export const COMMANDS: Record<string, Command> = {
       ["--layout default|compact", ""],
       ["--theme auto|light|dark", ""],
       ["--json", "print the aggregate instead of writing an SVG"],
+      ["--png", "also write a PNG beside the SVG"],
+      ["--preset card|square|portrait", "shape for the PNG (default: card)"],
+      ["--scale <n>", "PNG scale, 1-6 (default: 2)"],
       ["--dry-run", "report what would be written, write nothing"],
       ["--handle <name>", "override the handle on the card"],
     ],
@@ -77,15 +81,46 @@ export const COMMANDS: Record<string, Command> = {
     flags: [
       ["--out <path>", "default: tokenchit-recap.svg"],
       ["--year <yyyy>", "the year to report on"],
+      ["--week", "the last full Mon-Sun, against the week before it"],
+      ["--month", "the last full calendar month, against the month before it"],
       ["--handle <name>", "override the handle on the recap"],
       ["--theme auto|light|dark", ""],
+      ["--png", "also write a PNG beside the SVG"],
+      ["--preset card|square|portrait", "shape for the PNG (default: card)"],
+      ["--scale <n>", "PNG scale, 1-6 (default: 2)"],
       ["--json", "print the recap model instead of writing an SVG"],
       ["--dry-run", ""],
     ],
+    detail:
+      "--week and --month report the most recent period that has fully ended, never the one in\n" +
+      "progress: three days of this week against seven of last week is not a comparison. Both\n" +
+      "print to the terminal and to --json and write no SVG — the recap card is a year card, and\n" +
+      "a week rendered into it reads as a quiet year rather than a short window.\n\n" +
+      "The percentage against the previous period is withheld, with the reason printed, when that\n" +
+      "period began before this machine had any history. Measuring an install date and calling it\n" +
+      "growth is worse than showing no number.",
+  },
+  doctor: {
+    summary: "read-only report on sources, coverage, history and estimates",
+    flags: [["--json", "print the report as a stable JSON object"]],
+    detail:
+      "Consolidates the explanations sync, init and ledger each give separately: which agents\n" +
+      "were found and which cannot be counted, the first and last day with usage, what the\n" +
+      "ledger has banked, how much of the cost estimate is priced, and the accounting limits\n" +
+      "that actually apply to this machine.\n\n" +
+      "It writes nothing. No scan is persisted, the ledger is not rewritten or migrated, no\n" +
+      "sidecar or cache file is created, and no credential is refreshed. Remedies are printed\n" +
+      "as suggestions for you to run.\n\n" +
+      "Observed date bounds are not a completeness claim. A silent day and a day whose\n" +
+      "transcripts were deleted look identical from here, so no percentage is invented.",
   },
   ledger: {
     summary: "show the local history bank, or rebuild it",
     flags: [
+      ["--export <file>", "write a portable copy of this history"],
+      ["--import <file>", "preview merging one in; nothing is written without --apply"],
+      ["--apply", "commit the previewed import"],
+      ["--json", "machine-readable export summary or import preview"],
       ["--rebuild", "discard it and re-derive from the logs still on disk"],
       ["--yes", "required by --rebuild, which cannot be undone"],
     ],
@@ -93,13 +128,20 @@ export const COMMANDS: Record<string, Command> = {
       "Agent logs are deleted. Claude Code's cleanupPeriodDays defaults to 30, so a card built\n" +
       "only from what is on disk reports usage since the last cleanup rather than usage since\n" +
       "you installed anything — and that boundary moves every night.\n\n" +
-      "So every sync banks what it saw, keyed by day, agent and model, and keeps whichever\n" +
-      "reading is fuller. Once a day is recorded, retention can take the transcripts and the\n" +
-      "figure survives. The bank is local, is never uploaded on its own, and lives beside your\n" +
-      "credentials rather than in the repo.\n\n" +
-      "It cannot recover history from before it existed, and it cannot be moved between\n" +
-      "machines. --rebuild exists because a max-wins bank would otherwise keep a bad reading\n" +
-      "forever; it throws away every day the logs no longer cover.",
+      "So every sync banks what it saw, per day, agent, model and session, keeping whichever\n" +
+      "reading of a session is fuller. Once a day is recorded, retention can take the\n" +
+      "transcripts and the figure survives. The bank is local, is never uploaded on its own,\n" +
+      "and lives beside your credentials rather than in the repo.\n\n" +
+      "--export writes usage and nothing else: no credentials, no transcripts, no repository\n" +
+      "names, no paths. Session identities travel as truncated digests.\n\n" +
+      "--import merges by session rather than by day, which is the only way to tell two\n" +
+      "machines' work apart from one machine's work copied twice. The same session seen twice\n" +
+      "is counted once at its fuller reading; different sessions add. History with no session\n" +
+      "identity — anything banked before this version — is kept and reported but never added,\n" +
+      "because nothing in it distinguishes independent work from a duplicate.\n\n" +
+      "Preview is the default. --apply keeps a recoverable copy beside the ledger.\n\n" +
+      "--rebuild exists because a max-wins bank would otherwise keep a bad reading forever; it\n" +
+      "throws away every day the logs no longer cover.",
   },
   schedule: {
     summary: "print a scheduler entry to keep your row current",
@@ -168,7 +210,7 @@ export const COMMANDS: Record<string, Command> = {
 export const GROUPS: Array<[string, string[]]> = [
   ["start here", ["generate"]],
   ["or step by step", ["init", "sync", "publish"]],
-  ["more", ["recap", "ledger", "hook", "schedule"]],
+  ["more", ["recap", "doctor", "ledger", "hook", "schedule"]],
   ["account", ["login", "logout", "whoami", "unpublish"]],
 ];
 

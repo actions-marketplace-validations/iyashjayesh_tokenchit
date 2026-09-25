@@ -9,7 +9,10 @@ import { CARD_HOST, DARK, esc, FONT, LIGHT, render } from "./svg.js";
  * is fixed: a recap that grows with the data would reflow a reader's page every sync.
  */
 const W = 495;
-const H = 330;
+/** The card with no badges on it. Height grows by a row for each row of badges earned. */
+const BASE_H = 330;
+/** Vertical space one row of badge pills occupies, pill plus the gap above it. */
+const BADGE_ROW_H = 22;
 const PAD = 28;
 const INNER = W - PAD * 2; // 439, same track the card uses
 
@@ -25,6 +28,54 @@ const GRID = {
 };
 
 const gridRight = GRID.x + GRID.cols * GRID.pitch - 1;
+
+/** Pill metrics. The font is monospace, so a label's width is arithmetic rather than a guess. */
+const BADGE = { font: 7.5, charW: 4.5, padX: 8, gap: 6, h: 14 };
+
+/** The longest label that can fit the inner track, in characters. */
+const MAX_PILL_CHARS = Math.floor((INNER - BADGE.padX * 2) / BADGE.charW);
+
+/**
+ * A label short enough to fit inside one pill.
+ *
+ * No badge this tool awards comes close — the longest is "Weekend Zombie" at fourteen — so this
+ * is a guard rather than a feature. Wrapping cannot save a *single* label that is wider than the
+ * card, and the failure mode without this is text running off the edge of the artwork, which
+ * looks like a broken renderer rather than a long name.
+ */
+const fitLabel = (label: string): string =>
+  label.length <= MAX_PILL_CHARS ? label : `${label.slice(0, MAX_PILL_CHARS - 1)}\u2026`;
+
+const pillWidth = (label: string): number => fitLabel(label).length * BADGE.charW + BADGE.padX * 2;
+
+/**
+ * Lay the badges out into rows that fit the card's inner track.
+ *
+ * Wrapped rather than truncated, and never scaled: a pill whose text overflows it reads as a
+ * rendering bug, and dropping a badge somebody earned to save 20px is the wrong trade on the
+ * one artifact whose whole job is to show what they earned. Seven badges — every one this tool
+ * can award — fit in two rows.
+ */
+function badgeRows(labels: string[]): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let used = 0;
+
+  for (const label of labels) {
+    const w = pillWidth(label);
+    const needed = row.length === 0 ? w : used + BADGE.gap + w;
+    if (row.length > 0 && needed > INNER) {
+      rows.push(row);
+      row = [label];
+      used = w;
+    } else {
+      row.push(label);
+      used = needed;
+    }
+  }
+  if (row.length > 0) rows.push(row);
+  return rows;
+}
 
 /**
  * The coldest ramp step is a near-white that reads as a solid block on a dark ground, so
@@ -56,6 +107,11 @@ export function buildRecapSvg(opts: RecapCardOptions): string {
   const handle = sanitizeHandle(opts.handle);
   const ramp = theme === "dark" ? darkRamp() : RAMP;
   const r = opts.recap;
+
+  /* The card is only as tall as it needs to be. A year with no badges renders exactly the card
+     that shipped before this existed, so nothing moves for somebody who earned none. */
+  const rows = badgeRows(r.badges.map((b) => b.label));
+  const H = BASE_H + rows.length * BADGE_ROW_H;
 
   /* Classes exist only for theme=auto, where the media query needs them. Explicit themes
      carry presentation attributes and no <style>, so they survive a sanitiser. */
@@ -279,6 +335,53 @@ export function buildRecapSvg(opts: RecapCardOptions): string {
     }),
   );
 
+  /*
+   * Badges, between the legend and the footer.
+   *
+   * Outlined rather than filled: the heatmap owns the card's colour, and five green pills under
+   * it would compete with the data for attention. A stroke reads as a label, which is what a
+   * badge is.
+   */
+  rows.forEach((row, rowIndex) => {
+    const y = legendY + 18 + rowIndex * BADGE_ROW_H;
+    let x = PAD;
+    for (const label of row) {
+      const w = pillWidth(label);
+      parts.push(
+        render({
+          tag: "rect",
+          attrs: {
+            ...cls("bg"),
+            x,
+            y,
+            width: w,
+            height: BADGE.h,
+            rx: BADGE.h / 2,
+            fill: "none",
+            stroke: pal.legend,
+            "stroke-width": 1,
+          },
+        }),
+      );
+      parts.push(
+        render({
+          tag: "text",
+          attrs: {
+            ...cls("lg"),
+            x: x + w / 2,
+            y: y + BADGE.h / 2 + 2.7,
+            "text-anchor": "middle",
+            "font-family": FONT,
+            "font-size": BADGE.font,
+            fill: pal.legend,
+          },
+          text: fitLabel(label),
+        }),
+      );
+      x += w + BADGE.gap;
+    }
+  });
+
   // footer
   parts.push(
     render({
@@ -310,6 +413,8 @@ export function buildRecapSvg(opts: RecapCardOptions): string {
       `.hd,.vl{fill:${DARK.text}}` +
       `.hl{stroke:${DARK.hairline}}.rl{stroke:${DARK.rule}}` +
       `.lb{fill:${DARK.label}}.lg{fill:${DARK.legend}}.ft{fill:${DARK.footer}}` +
+      // The pill outline is a stroke, so it needs its own rule; `.lg` only carries fills.
+      `.bg{stroke:${DARK.legend}}` +
       // The coldest ramp step is a near-white that vanishes on a dark ground.
       `.q0{fill:#1C1C18}}</style>`
     : "";
