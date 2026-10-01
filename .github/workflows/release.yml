@@ -27,7 +27,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           # Tags are needed to know whether this version was already released.
           fetch-depth: 0
